@@ -1,0 +1,13 @@
+[Unit]
+Description=Juara Google Drive uploader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=juara2026pi5
+Group=juara2026pi5
+Environment=JUARA_LOCAL_ROOT=/mnt/juara_usb
+Environment=JUARA_GDRIVE_REMOTE=juara-gdrive
+Environment=JUARA_GDRIVE_DIR=Julice Station/pi5
+ExecStart=/usr/local/bin/juara_gdrive_sync

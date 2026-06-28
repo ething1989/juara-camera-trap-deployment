@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import time
+
+from juara_station.config import load_config
+from juara_station.sensors import SoftUartMhz19Co2
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check a UART CO2 sensor on pigpio software serial.")
+    parser.add_argument("--config", default="/etc/juara-station.toml")
+    parser.add_argument("--rx-gpio", type=int)
+    parser.add_argument("--tx-gpio", type=int)
+    parser.add_argument("--baudrate", type=int)
+    parser.add_argument("--warmup", type=int)
+    parser.add_argument("--count", type=int, default=5)
+    args = parser.parse_args()
+
+    cfg = load_config(args.config).sensors
+    rx_gpio = args.rx_gpio if args.rx_gpio is not None else cfg.uart_co2_rx_gpio
+    tx_gpio = args.tx_gpio if args.tx_gpio is not None else cfg.uart_co2_tx_gpio
+    baudrate = args.baudrate if args.baudrate is not None else cfg.uart_co2_baudrate
+    warmup = args.warmup if args.warmup is not None else cfg.uart_co2_warmup_seconds
+
+    print(f"CO2 UART check: sensor TX -> Pi GPIO{rx_gpio}, sensor RX -> Pi GPIO{tx_gpio}, baud={baudrate}")
+    if warmup > 0:
+        print(f"warming sensor for {warmup}s...")
+        time.sleep(warmup)
+
+    sensor = SoftUartMhz19Co2(rx_gpio=rx_gpio, tx_gpio=tx_gpio, baudrate=baudrate)
+    try:
+        for _ in range(args.count):
+            try:
+                print(f"co2_ppm={sensor.read_ppm()}")
+            except Exception as exc:
+                print(f"read_error={type(exc).__name__}: {exc}")
+            time.sleep(2)
+    finally:
+        sensor.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

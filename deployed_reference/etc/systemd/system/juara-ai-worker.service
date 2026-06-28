@@ -1,0 +1,33 @@
+[Unit]
+Description=Juara BirdNET backlog worker
+After=local-fs.target juara-station.service
+Wants=juara-station.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=june2026trap
+Group=june2026trap
+SupplementaryGroups=audio video i2c gpio plugdev
+WorkingDirectory=/opt/juara-wildlife-station
+Environment=PYTHONUNBUFFERED=1
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=NUMEXPR_NUM_THREADS=1
+ExecStart=/opt/juara-wildlife-station/.venv/bin/juara-station --config /etc/juara-station.toml ai-worker
+Restart=always
+RestartSec=60
+KillSignal=SIGTERM
+TimeoutStopSec=30
+SendSIGKILL=yes
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=90%
+MemoryHigh=320M
+MemoryMax=400M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

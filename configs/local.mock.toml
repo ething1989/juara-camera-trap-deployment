@@ -1,0 +1,37 @@
+[location]
+latitude = -17.102778
+longitude = -56.941639
+country = "BRA"
+admin1_region = "BR-MT"
+timezone = "America/Cuiaba"
+
+[storage]
+root = ".local_run/usb"
+fallback_root = ".local_run/fallback"
+recording_root = ".local_run/audio"
+require_usb = false
+
+[schedule]
+interval_seconds = 5
+sensor_sample_seconds = 1
+night_start_hour = 18
+night_end_hour = 6
+image_ai_defer_start_hour = 18
+image_ai_defer_end_hour = 8
+motion_capture_delay_seconds = 0.5
+flash_after_capture_seconds = 0.5
+
+[time]
+rtc_write_enabled = false
+
+[camera]
+motion_enabled = true
+scheduled_capture_times = []
+
+[birdnet]
+enabled = true
+python = ".venv/bin/python"
+
+[speciesnet]
+enabled = true
+python = ".venv/bin/python"

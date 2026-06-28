@@ -1,0 +1,53 @@
+b9aeb369-cc41-4303-9b95-edcd7bcc8ff6;mammalia;artiodactyla;cervidae;blastocerus;dichotomus;marsh deer
+d0d285e1-969c-4015-9449-b827bed7e66c;mammalia;primates;cebidae;sapajus;cay;azaras's capuchin
+89d41ec3-af8a-438a-86dd-4a6cb1819f07;mammalia;pilosa;myrmecophagidae;tamandua;tetradactyla;southern tamandua
+354ed939-9c08-49a4-a7cf-848f85e0e466;aves;ciconiiformes;ciconiidae;jabiru;mycteria;jabiru
+28289394-550c-4076-9cc4-3fee0c876cbb;aves;struthioniformes;tinamidae;rhynchotus;rufescens;red-winged tinamou
+f8396264-caac-4612-b880-c60b4d0939ae;aves;galliformes;cracidae;ortalis;canicollis;chaco chachalaca
+07709a39-6d4b-4973-bc8e-3543ce208611;mammalia;carnivora;mustelidae;pteronura;brasiliensis;giant otter
+6d0d096e-79b8-4fbe-90e1-044e41e24c2c;mammalia;carnivora;mustelidae;eira;barbara;tayra
+0dba69b2-dfd7-48af-8e64-e576cbda74c3;mammalia;artiodactyla;cervidae;mazama;americana;red brocket
+2ed0c8d0-c194-43d0-be54-7e2b1215c795;mammalia;carnivora;canidae;lycalopex;vetulus;hoary fox
+22976d14-d424-4f18-a67a-d8e1689cefcc;mammalia;carnivora;felidae;leopardus;pardalis;ocelot
+32c0147f-1967-4644-b107-8133ae1f020a;mammalia;rodentia;cuniculidae;cuniculus;paca;spotted paca
+3bbd196e-e3a2-4024-a6dc-f20153c9428f;reptilia;squamata;teiidae;tupinambis;teguixin;black tegu
+39e5ea73-38f1-454a-8054-7c67f20fbced;mammalia;perissodactyla;tapiridae;tapirus;terrestris;lowland tapir
+5bf1ea7e-141a-4cc2-92ac-5e20bf64b408;mammalia;carnivora;felidae;herpailurus;yagouaroundi;jaguarundi
+47271bc2-de1a-4ee4-8353-9039a1847f11;mammalia;carnivora;mustelidae;lontra;longicaudis;neotropical otter
+08bec04b-25cd-41ef-a562-43398470d35e;reptilia;crocodilia;alligatoridae;caiman;;caiman
+14cf8991-a2c0-4ceb-9ba1-78017c41d4ac;reptilia;squamata;teiidae;salvator;merianae;argentine black and white tegu
+9b7fea59-cfa3-499c-a420-bcf36277dcd8;mammalia;carnivora;felidae;panthera;onca;jaguar
+a5105a31-78d8-4709-81d6-1aa6822ab86f;mammalia;carnivora;canidae;chrysocyon;brachyurus;maned wolf
+37ee3aa1-ba29-4700-b8fb-76a338fe1dbc;aves;galliformes;cracidae;pipile;cumanensis;blue-throated piping-guan
+1d3bbcaa-f81a-41d9-8904-5cc8a505af32;mammalia;carnivora;procyonidae;nasua;nasua;south american coati
+2b98dad0-1e0e-4488-9cbe-9c4777dd9eca;mammalia;pilosa;myrmecophagidae;myrmecophaga;tridactyla;giant anteater
+1ccdb5c3-88b4-498a-b8c8-0ff9fc5484c6;mammalia;cingulata;chlamyphoridae;cabassous;unicinctus;southern naked-tailed armadillo
+0d27127e-e39f-41f4-9685-11d68f4777ae;mammalia;artiodactyla;cervidae;mazama;gouazoubira;gray brocket
+c56031a6-f8ce-4929-b6eb-b5253d4e1cdc;mammalia;carnivora;procyonidae;procyon;cancrivorus;crab-eating raccoon
+85b2a801-0eac-42ac-8f46-d3a8ff3a8a29;aves;cariamiformes;cariamidae;cariama;cristata;red-legged seriema
+872e96f1-7a77-4ed2-824a-22fcbb32f598;mammalia;rodentia;caviidae;hydrochoerus;hydrochaeris;capybara
+568b60c5-123c-4d70-b918-c6ecb7dfb39f;mammalia;cingulata;chlamyphoridae;euphractus;sexcinctus;yellow armadillo
+1b777768-0871-4c2e-bb06-b0d6cb1310e4;aves;piciformes;ramphastidae;ramphastos;toco;toco toucan
+abaa8edc-1106-4d7f-bb15-99891add68cb;reptilia;crocodylia;alligatoridae;caiman;crocodilus;spectacled caiman
+dcb48956-79c7-49c9-b4e0-9225f67fd951;mammalia;artiodactyla;cervidae;ozotoceros;bezoarticus;pampas deer
+23a81cc4-9f19-47fe-ba82-69759224b603;aves;struthioniformes;tinamidae;crypturellus;soui;little tinamou
+d23e77b7-0314-4129-b2e8-810e9c4771e7;mammalia;cingulata;chlamyphoridae;priodontes;maximus;giant armadillo
+a9b958fa-12eb-495e-b806-84445f47f7dc;aves;struthioniformes;tinamidae;crypturellus;tataupa;tataupa tinamou
+c17f977b-3f04-41e1-9ad2-4958a0a18a4c;aves;galliformes;cracidae;crax;fasciolata;bare-faced curassow
+313e5336-7f9e-4fa6-847f-a84077829ceb;aves;struthioniformes;tinamidae;crypturellus;obsoletus;brown tinamou
+c09f39da-fcc2-4399-9dbf-bd5bfce6f074;aves;struthioniformes;tinamidae;crypturellus;undulatus;undulated tinamou
+9c7ceb0a-686e-4ee1-be2d-0cf0ecc808eb;aves;ciconiiformes;ciconiidae;ciconia;maguari;maguari stork
+58058db8-7200-4071-8c7d-1c0bbe2a77cf;aves;ciconiiformes;ciconiidae;mycteria;americana;wood stork
+d43df410-ee4e-4a4a-95e3-dabdcc8299c7;mammalia;primates;atelidae;alouatta;caraya;black-and-gold howler monkey
+37353d72-98f1-404d-ba6a-7cbf8c2d25c7;mammalia;primates;callitrichidae;mico;melanurus;black-tailed marmoset
+5c1df8ab-e75c-4b49-ad5b-f81d753b9bc7;mammalia;rodentia;dasyproctidae;dasyprocta;azarae;azara's agouti
+07843615-e1fc-49d8-9821-fd1d7ff2e773;mammalia;cingulata;dasypodidae;dasypus;novemcinctus;nine-banded armadillo
+9c564562-9429-405c-8529-04cff7752282;mammalia;carnivora;felidae;puma;concolor;puma
+575008c3-8e3b-4efe-8da6-47631d60d5b7;mammalia;artiodactyla;tayassuidae;tayassu;pecari;white-lipped peccary
+5acf63fb-339d-42b1-af7e-95f6151ae5fb;mammalia;artiodactyla;tayassuidae;pecari;tajacu;collared peccary
+a0d09a27-59c6-4a31-8b67-e0a6ec8c49f9;mammalia;carnivora;canidae;cerdocyon;thous;crab-eating fox
+71e22955-6a6e-497c-bc89-143116ef03ad;aves;struthioniformes;rheidae;rhea;americana;greater rhea
+90ebae60-bd86-4b2c-b5f3-0ebe5ee84806;mammalia;pilosa;myrmecophagidae;tamandua;;tamandua species
+f20f3ef6-d63d-49ab-89d9-85eaec6ce6e0;mammalia;cingulata;dasypodidae;;;armadillo family
+988b8b2d-6d3b-4c5f-899c-c76b6108b90b;mammalia;artiodactyla;tayassuidae;;;peccary family
+7dfa5f8e-30b1-44f3-9959-6922a82cc20b;mammalia;perissodactyla;tapiridae;tapirus;;tapirus species

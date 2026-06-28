@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -u
+
+CONFIG_PATH="${JUARA_CONFIG:-/etc/juara-station.toml}"
+APP_DIR="${JUARA_APP_DIR:-/opt/juara-wildlife-station}"
+
+echo "=== time ==="
+date
+
+echo "=== i2c scan bus 1 ==="
+/usr/sbin/i2cdetect -y 1 || true
+
+echo "=== raw 0x62 probe ==="
+/usr/sbin/i2cget -y 1 0x62 2>&1 || true
+if command -v i2ctransfer >/dev/null 2>&1; then
+  /usr/sbin/i2ctransfer -y 1 w2@0x62 0x36 0x82 r9 2>&1 || true
+fi
+
+echo "=== juara sensor sample ==="
+cd "$APP_DIR" || exit 1
+# shellcheck disable=SC1091
+source .venv/bin/activate
+python - <<'PY'
+from juara_station.config import load_config
+from juara_station.sensors import SensorSuite
+
+cfg = load_config("/etc/juara-station.toml")
+sensors = SensorSuite(cfg.sensors)
+sample = sensors.sample()
+print({
+    "temperature_c": sample.temperature_c,
+    "humidity_pct": sample.humidity_pct,
+    "pressure_mmhg": sample.pressure_mmhg,
+    "lux": sample.lux,
+    "co2_ppm": sample.co2_ppm,
+    "errors": sensors.init_errors[-5:],
+})
+PY

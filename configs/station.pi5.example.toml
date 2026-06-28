@@ -1,0 +1,148 @@
+[location]
+latitude = -17.102778
+longitude = -56.941639
+country = "BRA"
+admin1_region = "BR-MT"
+timezone = "America/Cuiaba"
+
+[storage]
+root = "/mnt/juara_usb/juara"
+fallback_root = "/var/lib/juara-station"
+state_root = "/var/lib/juara-station/state"
+work_root = "/tmp/juara-ai-work"
+recording_root = "/var/lib/juara-station/audio_recordings"
+require_usb = false
+
+[schedule]
+interval_seconds = 300
+sensor_sample_seconds = 60
+night_start_hour = 18
+night_end_hour = 6
+audio_recording_disabled_start_hour = 1
+audio_recording_disabled_end_hour = 3
+audio_backlog_purge_hour = 3
+post_audio_reboot_enabled = false
+post_audio_reboot_hour = 3
+post_audio_reboot_delay_seconds = 180
+post_audio_reboot_command = "/usr/bin/sudo -n /usr/sbin/reboot"
+image_ai_defer_enabled = false
+image_ai_defer_start_hour = 18
+image_ai_defer_end_hour = 8
+photo_capture_disabled_start_hour = 0
+photo_capture_disabled_end_hour = 0
+photo_processing_deadline_hour = 6
+motion_capture_delay_seconds = 0.0
+flash_after_capture_seconds = 0.5
+
+[camera]
+enabled = false
+backend = "picamera2"
+motion_enabled = false
+scheduled_capture_times = []
+width = 1920
+height = 1080
+pir_gpio = 4
+flash_gpio = 17
+max_exposure_us = 250000
+warm_restart_interval_seconds = 300
+day_scan_enabled = false
+day_scan_interval_seconds = 1800
+day_scan_start_hour = 6
+day_scan_end_hour = 19
+day_scan_target_luma = 85.0
+day_scan_candidates = []
+
+[camera.day]
+auto_exposure = true
+exposure_value = 4.0
+
+[camera.night]
+exposure_us = 50000
+analogue_gain = 12.0
+denoise = "cdn_fast"
+
+[audio]
+enabled = true
+device = "plughw:CARD=Device,DEV=0"
+record_command = "arecord"
+mixer_command = "amixer"
+capture_gain_percent = 100
+capture_gain_controls = ["Mic", "Capture"]
+delete_recordings_after_ai = true
+
+[audio.day]
+sample_rate = 48000
+sample_format = "S32_LE"
+channels = 1
+
+[audio.night]
+sample_rate = 24000
+sample_format = "S16_LE"
+channels = 1
+
+[sensors]
+enabled = true
+bme280_address = 0x76
+veml7700_address = 0x10
+scd41_enabled = true
+scd41_address = 0x62
+
+[time]
+gps_command = "gpspipe"
+rtc_read_command = "/usr/bin/sudo -n /usr/sbin/hwclock"
+rtc_write_enabled = true
+large_drift_minutes = 5.0
+small_drift_minutes = 1.0
+gps_large_drift_sync_count = 3
+
+[birdnet]
+enabled = true
+backend = "birdnet"
+species_list_path = "/etc/juara-birdnet-species-list.txt"
+run_in_station_service = false
+use_subprocess = false
+prewarm_at_start = true
+process_inline = false
+batch_min_files = 1
+batch_max_files = 1
+batch_max_wait_seconds = 3600
+night_batch_enabled = false
+night_batch_interval_seconds = 14400
+keep_work_outputs = false
+ffmpeg_command = "ffmpeg"
+audio_gain_db = 36.0
+min_confidence = 0.25
+candidate_min_confidence = 0.10
+sensitivity_day = 1.0
+sensitivity_night = 0.8
+overlap_day = 0.0
+overlap_night = 0.0
+workers = 1
+batch_size = 1
+fast_tflite = true
+sf_threshold = 0.005
+
+[speciesnet]
+enabled = false
+backend = "speciesnet"
+run_in_station_service = false
+classifier_only = true
+direct_classifier = true
+isolated_process = true
+subprocess_timeout_seconds = 240
+subprocess_threads = 1
+subprocess_nice = 15
+subprocess_memory_limit_mb = 384
+keep_classifier_loaded = false
+batch_size = 1
+input_size = 224
+fast_input_size = 0
+fast_accept_min_confidence = 0.90
+blank_precheck_enabled = true
+blank_precheck_skip_classifier = true
+min_classifier_available_memory_mb = 650
+max_photos_per_run = 1
+blank_min_confidence = 0.70
+animal_min_confidence = 0.20
+delete_blanks = false
+keep_work_outputs = false

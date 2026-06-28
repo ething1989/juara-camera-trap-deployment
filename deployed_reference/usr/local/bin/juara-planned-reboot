@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="/opt/juara-wildlife-station"
+CONFIG_PATH="/etc/juara-station.toml"
+VENV_PYTHON="$APP_DIR/.venv/bin/python"
+TIMEOUT_SECONDS="${JUARA_PLANNED_REBOOT_TIMEOUT_SECONDS:-180}"
+export APP_DIR CONFIG_PATH VENV_PYTHON
+
+cleanup() {
+  systemctl stop juara-station.service juara-ai-worker.service 2>/dev/null || true
+  "$VENV_PYTHON" -m juara_station.cli --config "$CONFIG_PATH" planned-reboot-cleanup || true
+}
+
+if ! timeout --kill-after=15s "${TIMEOUT_SECONDS}s" bash -c "$(declare -f cleanup); cleanup"; then
+  echo "WARNING: Juara planned reboot cleanup timed out after ${TIMEOUT_SECONDS}s; rebooting anyway." >&2
+fi
+
+systemctl reboot
