@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 import csv
 import math
+import subprocess
+import sys
+import tempfile
 
 from .paths import atomic_replace_text
 
@@ -16,6 +19,7 @@ class SpeciesPackSelection:
     region_file: str | None
     cell_files: tuple[str, ...]
     species_count: int
+    source: str = "species_pack"
 
 
 def build_species_list_from_pack(
@@ -74,6 +78,96 @@ def write_active_species_list(
         cells_without_region=cells_without_region,
     )
     atomic_replace_text(Path(output_path), "\n".join(species) + "\n")
+    _write_metadata(output_path, selection)
+    return selection
+
+
+def write_world_species_list(pack_root: Path, output_path: Path) -> SpeciesPackSelection:
+    pack_root = Path(pack_root)
+    species = _read_species_file(pack_root / "regions" / "world.txt")
+    if not species:
+        values: set[str] = set()
+        for row in _load_cells(pack_root):
+            values.update(_read_species_file(pack_root / row["file"]))
+        species = sorted(values)
+    selected = sorted(value for value in species if value)
+    atomic_replace_text(Path(output_path), "\n".join(selected) + "\n")
+    selection = SpeciesPackSelection(
+        latitude=-1,
+        longitude=-1,
+        region_key="world",
+        region_file="regions/world.txt",
+        cell_files=(),
+        species_count=len(selected),
+        source="world",
+    )
+    _write_metadata(output_path, selection, {"filter": "all_birds"})
+    return selection
+
+
+def write_birdnet_location_species_list(
+    output_path: Path,
+    latitude: float,
+    longitude: float,
+    *,
+    week: int = -1,
+    threshold: float = 0.03,
+    timeout_seconds: int = 180,
+) -> SpeciesPackSelection:
+    output_path = Path(output_path)
+    code = (
+        "from birdnet_analyzer.species import species; "
+        "import sys; "
+        "species(sys.argv[1], lat=float(sys.argv[2]), lon=float(sys.argv[3]), "
+        "week=int(sys.argv[4]), sf_thresh=float(sys.argv[5]), sortby='alpha')"
+    )
+    with tempfile.TemporaryDirectory(prefix="juara-birdnet-species-") as tmp:
+        tmp_path = Path(tmp)
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                code,
+                str(tmp_path),
+                str(latitude),
+                str(longitude),
+                str(week),
+                str(threshold),
+            ],
+            check=True,
+            timeout=timeout_seconds,
+        )
+        species: set[str] = set()
+        for path in sorted(tmp_path.glob("*.txt")):
+            species.update(_read_species_file(path))
+    selected = sorted(value for value in species if value)
+    if not selected:
+        raise RuntimeError("BirdNET location filter produced no species")
+    atomic_replace_text(output_path, "\n".join(selected) + "\n")
+    selection = SpeciesPackSelection(
+        latitude=latitude,
+        longitude=longitude,
+        region_key="birdnet_location",
+        region_file=None,
+        cell_files=(),
+        species_count=len(selected),
+        source="birdnet_location",
+    )
+    _write_metadata(
+        output_path,
+        selection,
+        {
+            "filter": "birdnet_location_frequency",
+            "week": week,
+            "threshold": threshold,
+            "timeout_seconds": timeout_seconds,
+            "note": "BirdNET metadata location filter; not an eBird API radius query.",
+        },
+    )
+    return selection
+
+
+def _write_metadata(output_path: Path, selection: SpeciesPackSelection, extra: dict | None = None) -> None:
     metadata = {
         "latitude": selection.latitude,
         "longitude": selection.longitude,
@@ -81,9 +175,11 @@ def write_active_species_list(
         "region_file": selection.region_file,
         "cell_files": list(selection.cell_files),
         "species_count": selection.species_count,
+        "source": selection.source,
     }
+    if extra:
+        metadata.update(extra)
     atomic_replace_text(Path(output_path).with_suffix(Path(output_path).suffix + ".metadata.json"), _json(metadata))
-    return selection
 
 
 def _load_cells(pack_root: Path) -> list[dict[str, str]]:

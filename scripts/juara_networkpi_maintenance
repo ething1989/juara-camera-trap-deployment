@@ -12,6 +12,7 @@ USB_MOUNT="${JUARA_USB_MOUNT:-/mnt/juara_usb}"
 LOCAL_ROOT="${JUARA_LOCAL_ROOT:-/var/lib/juara-station/local}"
 USB_ROOT="${JUARA_USB_ROOT:-/mnt/juara_usb/juara}"
 SETUP_SSID="${JUARA_SETUP_SSID:-NetworkPi}"
+SERVICE_REBOOT_TIMER="${JUARA_SERVICE_REBOOT_TIMER:-juara-service-hourly-reboot.timer}"
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
@@ -65,6 +66,18 @@ copy_to_usb() {
 }
 
 active_ssid="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1 == "yes" { print $2; exit }')"
+
+if [ "$active_ssid" = "$SETUP_SSID" ]; then
+  if systemctl list-unit-files "$SERVICE_REBOOT_TIMER" >/dev/null 2>&1; then
+    systemctl enable --now "$SERVICE_REBOOT_TIMER" >/dev/null 2>&1 || true
+    log "service mode active on $SETUP_SSID; $SERVICE_REBOOT_TIMER enabled"
+  else
+    log "service mode active on $SETUP_SSID"
+  fi
+else
+  systemctl disable --now "$SERVICE_REBOOT_TIMER" >/dev/null 2>&1 || true
+  log "run mode active; $SERVICE_REBOOT_TIMER disabled (active ssid: ${active_ssid:-none})"
+fi
 
 if mount_usb; then
   copy_to_usb

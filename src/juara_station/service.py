@@ -35,7 +35,7 @@ from .config import CameraModeConfig, StationConfig, is_night
 from .csv_exporter import CsvExportOptions, export_day_csv
 from .paths import StationPaths, resolve_paths
 from .sensors import MockSensorSuite, SensorSuite, read_cpu_temp
-from .species_pack import write_active_species_list
+from .species_pack import write_active_species_list, write_birdnet_location_species_list, write_world_species_list
 from .storage import DataStore, SensorSample, from_iso, to_utc_iso, utc_now
 from .timekeeper import TimeKeeper
 
@@ -495,7 +495,16 @@ class StationService:
             return changed_days
 
         try:
-            selection = write_active_species_list(Path(pack_root), Path(output_path), latitude, longitude)
+            if source == "gps":
+                try:
+                    selection = write_birdnet_location_species_list(Path(output_path), latitude, longitude)
+                except Exception:
+                    LOGGER.exception(
+                        "BirdNET GPS species-list filter failed; falling back to bundled regional species pack"
+                    )
+                    selection = write_active_species_list(Path(pack_root), Path(output_path), latitude, longitude)
+            else:
+                selection = write_world_species_list(Path(pack_root), Path(output_path))
             LOGGER.warning(
                 "Active BirdNET species list rebuilt from %s coordinates: %s species, region=%s",
                 source,
