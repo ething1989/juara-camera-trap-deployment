@@ -135,7 +135,7 @@ install -o root -g root -m 0755 "$APP_DIR/scripts/juara_gdrive_sync" /usr/local/
 install -o root -g root -m 0755 "$APP_DIR/scripts/juara_gdrive_auth_helper" /usr/local/bin/juara_gdrive_auth_helper
 install -o root -g root -m 0755 "$APP_DIR/scripts/juara_uart_co2_check" /usr/local/bin/juara_uart_co2_check
 cat >/etc/default/juara-gdrive-sync <<'ENV'
-JUARA_LOCAL_ROOT=/mnt/juara_usb/juara
+JUARA_LOCAL_ROOT=/var/lib/juara-station/local
 JUARA_GDRIVE_REMOTE=juara-gdrive
 JUARA_GDRIVE_DIR=Juara Sensor/pi4
 ENV

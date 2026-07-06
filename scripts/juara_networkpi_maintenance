@@ -57,15 +57,25 @@ copy_to_usb() {
   mkdir -p "$USB_ROOT"
   if command -v rsync >/dev/null 2>&1; then
     rsync -a --delete \
-      --exclude '/audio/**' \
-      --exclude '/media/audio/**' \
-      --exclude '/audio_recordings/**' \
-      --exclude '*.wav' \
-      --exclude '*.tmp' \
-      --exclude '*.part' \
+      --delete-excluded \
+      --exclude '**/juara_environment_samples.csv' \
+      --exclude '**/juara_photo_diagnostics.csv' \
+      --include '/*.csv' \
+      --include '/logs/' \
+      --include '/logs/*.csv' \
+      --include '/media/' \
+      --include '/media/photos/***' \
+      --include '/media/survey_photos/***' \
+      --include '/Photos/***' \
+      --include '/photos/***' \
+      --include '/survey_photos/***' \
+      --include '/SurveyPhotos/***' \
+      --include '/Survey Photos/***' \
+      --exclude '*' \
       "$LOCAL_ROOT"/ "$USB_ROOT"/ >>"$LOG_PATH" 2>&1
   else
-    cp -a "$LOCAL_ROOT"/. "$USB_ROOT"/ >>"$LOG_PATH" 2>&1 || true
+    log "rsync is not installed; skipped USB export to avoid copying debug files"
+    return 0
   fi
   log "USB export updated from $LOCAL_ROOT to $USB_ROOT"
 }

@@ -169,6 +169,69 @@ def write_birdnet_location_species_list(
     return selection
 
 
+def write_birdnet_area_species_list(
+    output_path: Path,
+    latitude: float,
+    longitude: float,
+    *,
+    radius_km: float = 100.0,
+    week: int = -1,
+    threshold: float = 0.03,
+    timeout_seconds: int = 180,
+) -> SpeciesPackSelection:
+    output_path = Path(output_path)
+    sample_points = _area_sample_points(latitude, longitude, radius_km)
+    selected: set[str] = set()
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="juara-birdnet-area-species-") as tmp:
+        tmp_path = Path(tmp)
+        for index, (point_lat, point_lon, label) in enumerate(sample_points):
+            point_dir = tmp_path / f"point_{index:02d}_{label}"
+            point_dir.mkdir()
+            try:
+                _write_birdnet_species_files(
+                    point_dir,
+                    point_lat,
+                    point_lon,
+                    week=week,
+                    threshold=threshold,
+                    timeout_seconds=timeout_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - exercised on Pis with model installed
+                failures.append(f"{label}:{exc}")
+                continue
+            for path in sorted(point_dir.glob("*.txt")):
+                selected.update(_read_species_file(path))
+    species = sorted(value for value in selected if value)
+    if not species:
+        detail = "; ".join(failures) if failures else "no species files written"
+        raise RuntimeError(f"BirdNET area species filter produced no species: {detail}")
+    atomic_replace_text(output_path, "\n".join(species) + "\n")
+    selection = SpeciesPackSelection(
+        latitude=latitude,
+        longitude=longitude,
+        region_key="birdnet_area",
+        region_file=None,
+        cell_files=(),
+        species_count=len(species),
+        source="birdnet_area",
+    )
+    _write_metadata(
+        output_path,
+        selection,
+        {
+            "filter": "birdnet_area_frequency",
+            "radius_km": radius_km,
+            "sample_point_count": len(sample_points),
+            "week": week,
+            "threshold": threshold,
+            "failed_sample_points": failures,
+            "note": "BirdNET offline location-frequency filter sampled at center plus 100 km offsets; not a manual species blacklist.",
+        },
+    )
+    return selection
+
+
 def _write_metadata(output_path: Path, selection: SpeciesPackSelection, extra: dict | None = None) -> None:
     metadata = {
         "latitude": selection.latitude,
@@ -240,6 +303,66 @@ def _read_species_file(path: Path) -> list[str]:
             continue
         species.append(value)
     return species
+
+
+def _write_birdnet_species_files(
+    output_dir: Path,
+    latitude: float,
+    longitude: float,
+    *,
+    week: int,
+    threshold: float,
+    timeout_seconds: int,
+) -> None:
+    code = (
+        "from birdnet_analyzer.species import species; "
+        "import sys; "
+        "species(sys.argv[1], lat=float(sys.argv[2]), lon=float(sys.argv[3]), "
+        "week=int(sys.argv[4]), sf_thresh=float(sys.argv[5]), sortby='alpha')"
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(output_dir),
+            str(latitude),
+            str(longitude),
+            str(week),
+            str(threshold),
+        ],
+        check=True,
+        timeout=timeout_seconds,
+    )
+
+
+def _area_sample_points(latitude: float, longitude: float, radius_km: float) -> tuple[tuple[float, float, str], ...]:
+    radius = max(0.0, float(radius_km))
+    offsets = [
+        (0.0, 0.0, "center"),
+        (radius, 0.0, "north"),
+        (-radius, 0.0, "south"),
+        (0.0, radius, "east"),
+        (0.0, -radius, "west"),
+        (radius, radius, "northeast"),
+        (radius, -radius, "northwest"),
+        (-radius, radius, "southeast"),
+        (-radius, -radius, "southwest"),
+    ]
+    if radius == 0:
+        offsets = offsets[:1]
+    return tuple(
+        (*_offset_lat_lon(latitude, longitude, north_km, east_km), label)
+        for north_km, east_km, label in offsets
+    )
+
+
+def _offset_lat_lon(latitude: float, longitude: float, north_km: float, east_km: float) -> tuple[float, float]:
+    lat = latitude + north_km / 110.574
+    cos_lat = max(0.01, abs(math.cos(math.radians(latitude))))
+    lon = longitude + east_km / (111.320 * cos_lat)
+    lon = ((lon + 180.0) % 360.0) - 180.0
+    return lat, lon
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

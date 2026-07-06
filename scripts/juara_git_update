@@ -12,6 +12,7 @@ CHECKOUT_DIR="${JUARA_GIT_CHECKOUT_DIR:-/var/lib/juara-station/git/juara-camera-
 DEPLOY_DIR="${JUARA_GIT_DEPLOY_DIR:-/opt/juara-wildlife-station}"
 BRANCH="${JUARA_GIT_BRANCH:-main}"
 CONFIG_PATH="${JUARA_STATION_CONFIG:-/etc/juara-station.toml}"
+GDRIVE_ENV="${JUARA_GDRIVE_ENV:-/etc/default/juara-gdrive-sync}"
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
@@ -97,6 +98,7 @@ out: list[str] = []
 section = ""
 changed: list[str] = []
 camera_has_timeout = False
+time_has_radius = False
 
 def backup_once() -> None:
     backup = path.with_name(path.name + ".git-update-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -109,21 +111,34 @@ def maybe_insert_camera_timeout(next_section_line: str | None = None) -> None:
         out.append("capture_timeout_seconds = 15.0")
         camera_has_timeout = True
         changed.append("inserted camera.capture_timeout_seconds=15.0")
+
+def maybe_insert_species_radius(next_section_line: str | None = None) -> None:
+    global time_has_radius
+    if section == "time" and not time_has_radius:
+        out.append("species_area_radius_km = 100.0")
+        time_has_radius = True
+        changed.append("inserted time.species_area_radius_km=100.0")
+
+def maybe_leave_section(next_section_line: str | None = None) -> None:
+    maybe_insert_camera_timeout()
+    maybe_insert_species_radius()
     if next_section_line is not None:
         out.append(next_section_line)
 
 for line in lines:
     stripped = line.strip()
     if stripped.startswith("[") and stripped.endswith("]"):
-        maybe_insert_camera_timeout(line)
+        maybe_leave_section(line)
         section = stripped.strip("[]").strip()
         if section == "camera":
             camera_has_timeout = False
+        if section == "time":
+            time_has_radius = False
         continue
 
-    if section == "storage" and re.match(r'^\s*root\s*=\s*"/mnt/juara_usb"\s*$', line):
+    if section == "storage" and re.match(r'^\s*root\s*=\s*"/mnt/juara_usb(/juara)?"\s*$', line):
         out.append('root = "/var/lib/juara-station/local"')
-        changed.append("migrated storage.root from /mnt/juara_usb to /var/lib/juara-station/local")
+        changed.append("migrated storage.root to /var/lib/juara-station/local")
         continue
 
     if section == "camera" and re.match(r"^\s*capture_timeout_seconds\s*=", line):
@@ -137,9 +152,12 @@ for line in lines:
             out.append(line)
         continue
 
+    if section == "time" and re.match(r"^\s*species_area_radius_km\s*=", line):
+        time_has_radius = True
+
     out.append(line)
 
-maybe_insert_camera_timeout()
+maybe_leave_section()
 
 new_text = "\n".join(out) + ("\n" if text.endswith("\n") else "")
 if changed:
@@ -156,6 +174,28 @@ PY
   if [ "$migration_status" -eq 10 ]; then
     config_changed=1
   fi
+fi
+
+if [ -f "$GDRIVE_ENV" ]; then
+  gdrive_output="$(
+    GDRIVE_ENV="$GDRIVE_ENV" python3 <<'PY'
+from pathlib import Path
+import os
+import re
+
+path = Path(os.environ["GDRIVE_ENV"])
+text = path.read_text()
+updated = re.sub(r"^JUARA_LOCAL_ROOT=.*$", "JUARA_LOCAL_ROOT=/var/lib/juara-station/local", text, flags=re.MULTILINE)
+if "JUARA_LOCAL_ROOT=" not in updated:
+    updated += "\nJUARA_LOCAL_ROOT=/var/lib/juara-station/local\n"
+if updated != text:
+    path.write_text(updated)
+    print(f"updated {path} local root")
+else:
+    print("gdrive local root unchanged")
+PY
+  )"
+  log "$gdrive_output"
 fi
 
 if [ "$updated" -eq 1 ] || [ "$config_changed" -eq 1 ]; then

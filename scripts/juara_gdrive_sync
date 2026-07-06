@@ -6,7 +6,7 @@ if [ -f /etc/default/juara-gdrive-sync ]; then
   . /etc/default/juara-gdrive-sync
 fi
 
-LOCAL_ROOT="${JUARA_LOCAL_ROOT:-/mnt/juara_usb}"
+LOCAL_ROOT="${JUARA_LOCAL_ROOT:-/var/lib/juara-station/local}"
 REMOTE_NAME="${JUARA_GDRIVE_REMOTE:-juara-gdrive}"
 REMOTE_DIR="${JUARA_GDRIVE_DIR:-Julice Station/$(hostname)}"
 LOG_PATH="${JUARA_GDRIVE_LOG:-/var/log/juara-gdrive-sync.log}"
@@ -18,7 +18,6 @@ LOW_LEVEL_RETRIES="${JUARA_GDRIVE_LOW_LEVEL_RETRIES:-30}"
 RETRIES_SLEEP="${JUARA_GDRIVE_RETRIES_SLEEP:-2m}"
 CONNECT_TIMEOUT="${JUARA_GDRIVE_CONNECT_TIMEOUT:-60s}"
 IO_TIMEOUT="${JUARA_GDRIVE_IO_TIMEOUT:-10m}"
-INCLUDE_MOTION_PHOTOS="${JUARA_GDRIVE_INCLUDE_MOTION_PHOTOS:-0}"
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
@@ -52,14 +51,19 @@ if ! flock -n 9; then
 fi
 
 log "starting copy to ${REMOTE_NAME}:${REMOTE_DIR}"
-exclude_motion_photos=()
-if [ "$INCLUDE_MOTION_PHOTOS" != "1" ]; then
-  exclude_motion_photos=(
-    --exclude '/media/photos/**'
-    --exclude '/photos/**'
-    --exclude '/Photos/**'
-  )
-fi
+upload_filters=(
+  --filter '- **/juara_environment_samples.csv'
+  --filter '- **/juara_photo_diagnostics.csv'
+  --filter '+ /logs/'
+  --filter '+ /*.csv'
+  --filter '+ /logs/*.csv'
+  --filter '+ /media/'
+  --filter '+ /media/survey_photos/**'
+  --filter '+ /survey_photos/**'
+  --filter '+ /SurveyPhotos/**'
+  --filter '+ /Survey Photos/**'
+)
+upload_filters+=(--filter '- *')
 
 rclone copy "$LOCAL_ROOT" "${REMOTE_NAME}:${REMOTE_DIR}" \
   --create-empty-src-dirs \
@@ -71,8 +75,7 @@ rclone copy "$LOCAL_ROOT" "${REMOTE_NAME}:${REMOTE_DIR}" \
   --retries-sleep "$RETRIES_SLEEP" \
   --contimeout "$CONNECT_TIMEOUT" \
   --timeout "$IO_TIMEOUT" \
-  --exclude '/media/audio/**' \
-  "${exclude_motion_photos[@]}" \
+  "${upload_filters[@]}" \
   --exclude '/.Spotlight-V100/**' \
   --exclude '/.Trashes/**' \
   --exclude '/.fseventsd/**' \

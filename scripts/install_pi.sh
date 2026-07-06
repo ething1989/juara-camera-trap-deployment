@@ -485,6 +485,8 @@ install -m 0644 "$APP_DIR/systemd/juara-wifi-reconnect.service" /etc/systemd/sys
 install -m 0644 "$APP_DIR/systemd/juara-wifi-reconnect.timer" /etc/systemd/system/juara-wifi-reconnect.timer
 install -m 0644 "$APP_DIR/systemd/juara-networkpi-maintenance.service" /etc/systemd/system/juara-networkpi-maintenance.service
 install -m 0644 "$APP_DIR/systemd/juara-networkpi-maintenance.timer" /etc/systemd/system/juara-networkpi-maintenance.timer
+install -m 0644 "$APP_DIR/systemd/juara-git-update.service" /etc/systemd/system/juara-git-update.service
+install -m 0644 "$APP_DIR/systemd/juara-git-update.timer" /etc/systemd/system/juara-git-update.timer
 
 systemctl daemon-reload
 systemctl enable gpsd.socket gpsd.service || true
@@ -494,6 +496,7 @@ systemctl enable juara-ai-worker.service
 systemctl enable --now juara-daily-reboot.timer
 systemctl enable --now juara-wifi-reconnect.timer
 systemctl enable --now juara-networkpi-maintenance.timer
+systemctl enable --now juara-git-update.timer
 umount "$USB_MOUNT" 2>/dev/null || true
 
 "$VENV_PYTHON" - <<'PY' || true
