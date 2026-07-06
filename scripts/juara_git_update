@@ -11,6 +11,7 @@ REPO_URL="${JUARA_GIT_REPO_URL:-https://github.com/ething1989/juara-camera-trap-
 CHECKOUT_DIR="${JUARA_GIT_CHECKOUT_DIR:-/var/lib/juara-station/git/juara-camera-trap-deployment}"
 DEPLOY_DIR="${JUARA_GIT_DEPLOY_DIR:-/opt/juara-wildlife-station}"
 BRANCH="${JUARA_GIT_BRANCH:-main}"
+CONFIG_PATH="${JUARA_STATION_CONFIG:-/etc/juara-station.toml}"
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
@@ -21,11 +22,15 @@ if ! command -v git >/dev/null 2>&1; then
   exit 0
 fi
 
+updated=0
+config_changed=0
+
 mkdir -p "$(dirname "$CHECKOUT_DIR")"
 if [ ! -d "$CHECKOUT_DIR/.git" ]; then
   log "cloning $REPO_URL"
   rm -rf "$CHECKOUT_DIR"
   git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$CHECKOUT_DIR" >>"$LOG_PATH" 2>&1 || exit 0
+  updated=1
 else
   log "fetching $REPO_URL"
   git -C "$CHECKOUT_DIR" remote set-url origin "$REPO_URL" >>"$LOG_PATH" 2>&1 || true
@@ -34,24 +39,128 @@ else
   incoming="$(git -C "$CHECKOUT_DIR" rev-parse "origin/$BRANCH" 2>/dev/null || true)"
   if [ -n "$current" ] && [ "$current" = "$incoming" ]; then
     log "already up to date at $current"
-    exit 0
+  else
+    git -C "$CHECKOUT_DIR" reset --hard "origin/$BRANCH" >>"$LOG_PATH" 2>&1 || exit 0
+    updated=1
   fi
-  git -C "$CHECKOUT_DIR" reset --hard "origin/$BRANCH" >>"$LOG_PATH" 2>&1 || exit 0
 fi
 
-if [ -d "$DEPLOY_DIR/.git" ]; then
-  git -C "$DEPLOY_DIR" fetch --depth 1 "$CHECKOUT_DIR" "$BRANCH" >>"$LOG_PATH" 2>&1 || true
-  git -C "$DEPLOY_DIR" reset --hard FETCH_HEAD >>"$LOG_PATH" 2>&1 || true
+if [ "$updated" -eq 1 ]; then
+  if [ -d "$DEPLOY_DIR/.git" ]; then
+    git -C "$DEPLOY_DIR" fetch --depth 1 "$CHECKOUT_DIR" "$BRANCH" >>"$LOG_PATH" 2>&1 || true
+    git -C "$DEPLOY_DIR" reset --hard FETCH_HEAD >>"$LOG_PATH" 2>&1 || true
+  else
+    rsync -a --delete \
+      --exclude '.git' \
+      --exclude '.venv' \
+      "$CHECKOUT_DIR"/ "$DEPLOY_DIR"/ >>"$LOG_PATH" 2>&1 || true
+  fi
+
+  if [ -x "$DEPLOY_DIR/.venv/bin/python" ]; then
+    "$DEPLOY_DIR/.venv/bin/python" -m pip install -e "$DEPLOY_DIR" >>"$LOG_PATH" 2>&1 || true
+  fi
+
+  for helper in \
+    juara_git_update \
+    juara_networkpi_maintenance \
+    juara_gdrive_sync \
+    juara_wifi_reconnect \
+    juara_gdrive_auth_helper \
+    juara_scd41_check \
+    juara_uart_co2_check \
+    juara_motion_test; do
+    if [ -f "$CHECKOUT_DIR/scripts/$helper" ]; then
+      install -o root -g root -m 0755 "$CHECKOUT_DIR/scripts/$helper" "/usr/local/bin/$helper" >>"$LOG_PATH" 2>&1 || true
+    fi
+  done
+  if [ -f "$CHECKOUT_DIR/scripts/juara_motion_trips.py" ]; then
+    install -o root -g root -m 0755 "$CHECKOUT_DIR/scripts/juara_motion_trips.py" /usr/local/bin/juara-motion-trips >>"$LOG_PATH" 2>&1 || true
+  fi
+fi
+
+if [ -f "$CONFIG_PATH" ] && command -v python3 >/dev/null 2>&1; then
+  migration_output="$(
+    CONFIG_PATH="$CONFIG_PATH" python3 <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+import os
+import re
+import shutil
+import sys
+
+path = Path(os.environ["CONFIG_PATH"])
+text = path.read_text()
+lines = text.splitlines()
+out: list[str] = []
+section = ""
+changed: list[str] = []
+camera_has_timeout = False
+
+def backup_once() -> None:
+    backup = path.with_name(path.name + ".git-update-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+    shutil.copy2(path, backup)
+    changed.insert(0, f"backup={backup}")
+
+def maybe_insert_camera_timeout(next_section_line: str | None = None) -> None:
+    global camera_has_timeout
+    if section == "camera" and not camera_has_timeout:
+        out.append("capture_timeout_seconds = 15.0")
+        camera_has_timeout = True
+        changed.append("inserted camera.capture_timeout_seconds=15.0")
+    if next_section_line is not None:
+        out.append(next_section_line)
+
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        maybe_insert_camera_timeout(line)
+        section = stripped.strip("[]").strip()
+        if section == "camera":
+            camera_has_timeout = False
+        continue
+
+    if section == "storage" and re.match(r'^\s*root\s*=\s*"/mnt/juara_usb"\s*$', line):
+        out.append('root = "/var/lib/juara-station/local"')
+        changed.append("migrated storage.root from /mnt/juara_usb to /var/lib/juara-station/local")
+        continue
+
+    if section == "camera" and re.match(r"^\s*capture_timeout_seconds\s*=", line):
+        camera_has_timeout = True
+        match = re.search(r"=\s*([0-9.]+)", line)
+        value = float(match.group(1)) if match else 0.0
+        if value < 15.0:
+            out.append("capture_timeout_seconds = 15.0")
+            changed.append(f"raised camera.capture_timeout_seconds from {value:g} to 15.0")
+        else:
+            out.append(line)
+        continue
+
+    out.append(line)
+
+maybe_insert_camera_timeout()
+
+new_text = "\n".join(out) + ("\n" if text.endswith("\n") else "")
+if changed:
+    backup_once()
+    path.write_text(new_text)
+    print("config migration changed: " + "; ".join(changed))
+    sys.exit(10)
+
+print("config migration unchanged")
+PY
+  )"
+  migration_status=$?
+  log "$migration_output"
+  if [ "$migration_status" -eq 10 ]; then
+    config_changed=1
+  fi
+fi
+
+if [ "$updated" -eq 1 ] || [ "$config_changed" -eq 1 ]; then
+  systemctl restart juara-station.service juara-ai-worker.service >>"$LOG_PATH" 2>&1 || true
+  log "deployed field repo update (updated=$updated config_changed=$config_changed)"
 else
-  rsync -a --delete \
-    --exclude '.git' \
-    --exclude '.venv' \
-    "$CHECKOUT_DIR"/ "$DEPLOY_DIR"/ >>"$LOG_PATH" 2>&1 || true
+  log "field repo and managed config already current"
 fi
-
-if [ -x "$DEPLOY_DIR/.venv/bin/python" ]; then
-  "$DEPLOY_DIR/.venv/bin/python" -m pip install -e "$DEPLOY_DIR" >>"$LOG_PATH" 2>&1 || true
-fi
-
-systemctl restart juara-station.service juara-ai-worker.service >>"$LOG_PATH" 2>&1 || true
-log "deployed field repo update"
