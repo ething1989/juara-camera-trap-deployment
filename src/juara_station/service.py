@@ -33,9 +33,11 @@ from .audio import AudioRecorder, MockAudioRecorder
 from .camera import MotionWatcher, create_camera, create_flash
 from .config import CameraModeConfig, StationConfig, is_night
 from .csv_exporter import CsvExportOptions, export_day_csv
+from .geolocation import DEFAULT_GEOLOCATION_URLS, read_internet_location
 from .paths import StationPaths, resolve_paths
 from .sensors import MockSensorSuite, SensorSuite, read_cpu_temp
-from .species_pack import write_active_species_list, write_birdnet_location_species_list, write_world_species_list
+from .sound import MockYamNetRunner, YAMNET_SOURCE, YamNetRunner
+from .species_pack import write_active_species_list
 from .storage import DataStore, SensorSample, from_iso, to_utc_iso, utc_now
 from .timekeeper import TimeKeeper
 
@@ -78,6 +80,7 @@ class StationService:
         self.camera = create_camera(config.camera, mock=hardware_mock)
         self.flash = create_flash(config.camera, mock=hardware_mock)
         self.birdnet = MockBirdNetRunner() if mock else BirdNetRunner(config.birdnet, config.location)
+        self.yamnet = MockYamNetRunner() if mock else YamNetRunner(config.yamnet)
         self.speciesnet = MockSpeciesNetRunner() if mock else SpeciesNetRunner(config.speciesnet, config.location)
         self._capture_lock = Lock()
         self._ai_lock = Lock()
@@ -473,6 +476,7 @@ class StationService:
         event = {
             "gps": "GPS_COORDINATES",
             "past": "PAST_COORDINATES",
+            "internet": "INTERNET_COORDINATES",
             "fallback": "FALLBACK_COORDINATES",
         }.get(source, "FALLBACK_COORDINATES")
         if source == "gps" or log_non_gps_event:
@@ -495,16 +499,7 @@ class StationService:
             return changed_days
 
         try:
-            if source == "gps":
-                try:
-                    selection = write_birdnet_location_species_list(Path(output_path), latitude, longitude)
-                except Exception:
-                    LOGGER.exception(
-                        "BirdNET GPS species-list filter failed; falling back to bundled regional species pack"
-                    )
-                    selection = write_active_species_list(Path(pack_root), Path(output_path), latitude, longitude)
-            else:
-                selection = write_world_species_list(Path(pack_root), Path(output_path))
+            selection = write_active_species_list(Path(pack_root), Path(output_path), latitude, longitude)
             LOGGER.warning(
                 "Active BirdNET species list rebuilt from %s coordinates: %s species, region=%s",
                 source,
@@ -580,8 +575,28 @@ class StationService:
             latitude, longitude = previous
             return latitude, longitude, "past", "GPS unavailable; using last accepted field coordinates"
 
+        internet = self._read_internet_coordinates()
+        if internet is not None:
+            latitude, longitude, note = internet
+            self._write_coordinate_state(latitude, longitude, "internet")
+            return latitude, longitude, "internet", note
+
         self._write_coordinate_state(fallback[0], fallback[1], "fallback")
         return fallback[0], fallback[1], "fallback", "GPS unavailable; using backup deployment coordinates"
+
+    def _read_internet_coordinates(self) -> tuple[float, float, str] | None:
+        if not self.config.time.internet_coordinate_enabled:
+            return None
+        urls = self.config.time.internet_coordinate_urls or list(DEFAULT_GEOLOCATION_URLS)
+        location = read_internet_location(urls, timeout_seconds=self.config.time.internet_coordinate_timeout_seconds)
+        if location is None:
+            return None
+        label = f" ({location.label})" if location.label else ""
+        return (
+            location.latitude,
+            location.longitude,
+            f"GPS unavailable; using internet setup coordinates from {location.source_url}{label}",
+        )
 
     def _coordinate_state_path(self) -> Path:
         return self.paths.state_dir / "active_coordinates.json"
@@ -776,6 +791,13 @@ class StationService:
             LOGGER.warning("Acoustic index calculation failed for %s: %s", audio_path, exc, exc_info=True)
             indices = AcousticIndexResult.from_error(str(exc))
         self.store.save_acoustic_indices(period_start, indices)
+        if self.config.yamnet.enabled or self.mock:
+            try:
+                summary = self.yamnet.analyze_audio(audio_path)
+                self.store.save_sound_detections(period_start, YAMNET_SOURCE, summary.detections)
+            except Exception as exc:
+                LOGGER.warning("YAMNet analysis failed for %s: %s", audio_path, exc, exc_info=True)
+                self.store.save_sound_analysis_error(period_start, YAMNET_SOURCE, str(exc))
 
     def process_audio_event(self, period_start: datetime, audio_path: Path, night: bool) -> None:
         if not audio_path.exists():

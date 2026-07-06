@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from juara_station.acoustic_indices import ACOUSTIC_INDEX_VERSION, AcousticIndexResult
 from juara_station.csv_exporter import CsvExportOptions, export_day_csv, export_main_csv
-from juara_station.storage import BirdCall, BirdCandidate, DataStore, SensorSample
+from juara_station.storage import BirdCall, BirdCandidate, DataStore, SensorSample, SoundDetection
 
 
 def test_interval_summary_exports_expected_csv(tmp_path: Path):
@@ -59,6 +59,14 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
             acoustic_entropy_hf=0.5967,
             acoustic_rms=0.0567,
         ),
+    )
+    store.save_sound_detections(
+        start,
+        "yamnet",
+        [
+            SoundDetection("Bird vocalization, bird call, bird song", 0.88, category="bird"),
+            SoundDetection("Frog", 0.41, category="frog"),
+        ],
     )
     photo_id = store.create_photo_event(start, start, start)
     store.update_photo_event(
@@ -132,6 +140,9 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
     assert rows[0]["acoustic_aci"] == "12.346"
     assert rows[0]["acoustic_adi"] == "1.234"
     assert rows[0]["acoustic_ndsi"] == "0.234"
+    assert rows[0]["yamnet_top_label"] == "Bird vocalization, bird call, bird song"
+    assert rows[0]["yamnet_bird_score"] == "0.880"
+    assert rows[0]["yamnet_frog_score"] == "0.410"
     assert rows[0]["bird_calls_truncated"] == "0"
     assert rows[0]["Call 1"] == "Hyacinth macaw (75.0%)\nBlue-and-yellow macaw (12.0%)"
     assert rows[0]["Call 2"] == "Hyacinth macaw (70.0%)"

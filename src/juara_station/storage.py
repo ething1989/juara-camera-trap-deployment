@@ -78,6 +78,14 @@ class AnimalDetection:
     avg_confidence: float | None
 
 
+@dataclass(frozen=True)
+class SoundDetection:
+    label: str
+    score: float | None
+    source: str = "yamnet"
+    category: str | None = None
+
+
 class DataStore:
     def __init__(self, path: Path):
         self.path = path
@@ -208,6 +216,25 @@ class DataStore:
                     species TEXT NOT NULL,
                     confidence REAL,
                     UNIQUE(period_start_utc, call_index, rank)
+                );
+
+                CREATE TABLE IF NOT EXISTS sound_detections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    period_start_utc TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    label TEXT NOT NULL,
+                    score REAL,
+                    category TEXT,
+                    UNIQUE(period_start_utc, source, rank, label)
+                );
+
+                CREATE TABLE IF NOT EXISTS sound_analysis_errors (
+                    period_start_utc TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    error TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL,
+                    UNIQUE(period_start_utc, source)
                 );
 
                 CREATE TABLE IF NOT EXISTS photo_events (
@@ -532,6 +559,58 @@ class DataStore:
                     updated_at_utc = excluded.updated_at_utc
                 """,
                 (to_utc_iso(period_start), *indices.as_db_values(), to_utc_iso(utc_now())),
+            )
+
+    def save_sound_detections(
+        self,
+        period_start: datetime,
+        source: str,
+        detections: list[SoundDetection],
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM sound_detections WHERE period_start_utc = ? AND source = ?",
+                (to_utc_iso(period_start), source),
+            )
+            conn.execute(
+                "DELETE FROM sound_analysis_errors WHERE period_start_utc = ? AND source = ?",
+                (to_utc_iso(period_start), source),
+            )
+            conn.executemany(
+                """
+                INSERT INTO sound_detections (
+                    period_start_utc, source, rank, label, score, category
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        to_utc_iso(period_start),
+                        source,
+                        index,
+                        detection.label,
+                        detection.score,
+                        detection.category,
+                    )
+                    for index, detection in enumerate(detections, start=1)
+                ],
+            )
+
+    def save_sound_analysis_error(self, period_start: datetime, source: str, error: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM sound_detections WHERE period_start_utc = ? AND source = ?",
+                (to_utc_iso(period_start), source),
+            )
+            conn.execute(
+                """
+                INSERT INTO sound_analysis_errors (
+                    period_start_utc, source, error, updated_at_utc
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(period_start_utc, source) DO UPDATE SET
+                    error = excluded.error,
+                    updated_at_utc = excluded.updated_at_utc
+                """,
+                (to_utc_iso(period_start), source, error, to_utc_iso(utc_now())),
             )
 
     def create_photo_event(self, period_start: datetime, triggered_at: datetime, target_capture_at: datetime) -> int:
@@ -937,6 +1016,30 @@ class DataStore:
                     SELECT period_start_utc, call_index, start_seconds, end_seconds, rank, species, confidence
                     FROM bird_call_candidates
                     ORDER BY period_start_utc ASC, call_index ASC, rank ASC
+                    """
+                )
+            )
+
+    def list_sound_detections(self) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return list(
+                conn.execute(
+                    """
+                    SELECT period_start_utc, source, rank, label, score, category
+                    FROM sound_detections
+                    ORDER BY period_start_utc ASC, source ASC, rank ASC, score DESC, label ASC
+                    """
+                )
+            )
+
+    def list_sound_analysis_errors(self) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return list(
+                conn.execute(
+                    """
+                    SELECT period_start_utc, source, error
+                    FROM sound_analysis_errors
+                    ORDER BY period_start_utc ASC, source ASC
                     """
                 )
             )

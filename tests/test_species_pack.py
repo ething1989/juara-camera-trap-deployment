@@ -3,7 +3,7 @@ from pathlib import Path
 from juara_station.species_pack import build_species_list_from_pack, write_active_species_list
 
 
-def test_species_pack_selects_specific_region_and_four_nearest_cells(tmp_path: Path):
+def test_species_pack_selects_region_metadata_but_only_unions_nearest_cells(tmp_path: Path):
     pack = tmp_path / "pack"
     (pack / "metadata").mkdir(parents=True)
     (pack / "cells").mkdir()
@@ -48,6 +48,7 @@ def test_species_pack_selects_specific_region_and_four_nearest_cells(tmp_path: P
     assert selection.region_key == "amazon_rainforest"
     assert len(selection.cell_files) == 4
     assert "Species one" in species
+    assert "Species two" not in species
     assert "Cell E bird" not in species
     assert "Wrong broad species" not in species
 

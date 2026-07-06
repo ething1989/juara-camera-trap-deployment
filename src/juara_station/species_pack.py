@@ -27,6 +27,7 @@ def build_species_list_from_pack(
     latitude: float,
     longitude: float,
     *,
+    nearest_cell_count: int = 4,
     cells_with_region: int = 4,
     cells_without_region: int = 6,
 ) -> tuple[list[str], SpeciesPackSelection]:
@@ -35,17 +36,16 @@ def build_species_list_from_pack(
     if not cells:
         raise FileNotFoundError(f"No cell index rows found in {pack_root / 'metadata' / 'cell_index.csv'}")
     region = _select_region(pack_root, latitude, longitude)
-    cell_count = cells_with_region if region else cells_without_region
+    # Use regions only as metadata. Unioning an entire biome such as Amazon
+    # Rainforest makes the active list much too broad for local deployments.
+    cell_count = nearest_cell_count
     nearest_cells = sorted(
         cells,
         key=lambda row: _haversine_km(latitude, longitude, float(row["center_lat"]), float(row["center_lon"])),
     )[: max(1, cell_count)]
 
     species: set[str] = set()
-    region_file = None
-    if region is not None:
-        region_file = region["species_file"]
-        species.update(_read_species_file(pack_root / region_file))
+    region_file = region["species_file"] if region is not None else None
     cell_files = tuple(row["file"] for row in nearest_cells)
     for relative in cell_files:
         species.update(_read_species_file(pack_root / relative))
@@ -67,6 +67,7 @@ def write_active_species_list(
     latitude: float,
     longitude: float,
     *,
+    nearest_cell_count: int = 4,
     cells_with_region: int = 4,
     cells_without_region: int = 6,
 ) -> SpeciesPackSelection:
@@ -74,6 +75,7 @@ def write_active_species_list(
         pack_root,
         latitude,
         longitude,
+        nearest_cell_count=nearest_cell_count,
         cells_with_region=cells_with_region,
         cells_without_region=cells_without_region,
     )

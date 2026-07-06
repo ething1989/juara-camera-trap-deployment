@@ -177,6 +177,9 @@ class TimeConfig:
     coordinate_max_distance_from_fallback_km: float = 0.0
     fallback_latitude: float = -17.102778
     fallback_longitude: float = -56.941639
+    internet_coordinate_enabled: bool = True
+    internet_coordinate_timeout_seconds: float = 4.0
+    internet_coordinate_urls: list[str] = field(default_factory=list)
     species_pack_root: Path | None = None
     active_species_list_path: Path | None = None
 
@@ -210,6 +213,19 @@ class BirdNetConfig:
     batch_size: int = 1
     fast_tflite: bool = False
     sf_threshold: float = 0.005
+
+
+@dataclass(frozen=True)
+class YamNetConfig:
+    enabled: bool = False
+    python: str | None = None
+    model_path: str | None = None
+    class_map_path: str | None = None
+    ffmpeg_command: str = "ffmpeg"
+    min_confidence: float = 0.15
+    top_k: int = 8
+    max_audio_seconds: int = 30
+    subprocess_timeout_seconds: int = 600
 
 
 @dataclass(frozen=True)
@@ -252,6 +268,7 @@ class StationConfig:
     sensors: SensorConfig = field(default_factory=SensorConfig)
     time: TimeConfig = field(default_factory=TimeConfig)
     birdnet: BirdNetConfig = field(default_factory=BirdNetConfig)
+    yamnet: YamNetConfig = field(default_factory=YamNetConfig)
     speciesnet: SpeciesNetConfig = field(default_factory=SpeciesNetConfig)
 
     @property
