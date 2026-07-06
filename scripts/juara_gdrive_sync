@@ -65,6 +65,15 @@ upload_filters=(
 )
 upload_filters+=(--filter '- *')
 
+remote_cleanup_filters=(
+  --filter '+ **/juara_environment_samples.csv'
+  --filter '+ **/juara_photo_diagnostics.csv'
+  --filter '+ /media/photos/**'
+  --filter '+ /photos/**'
+  --filter '+ /Photos/**'
+  --filter '- *'
+)
+
 rclone copy "$LOCAL_ROOT" "${REMOTE_NAME}:${REMOTE_DIR}" \
   --create-empty-src-dirs \
   --fast-list \
@@ -90,6 +99,10 @@ rclone copy "$LOCAL_ROOT" "${REMOTE_NAME}:${REMOTE_DIR}" \
 status=$?
 if [ "$status" -eq 0 ]; then
   log "sync complete"
+  rclone delete "${REMOTE_NAME}:${REMOTE_DIR}" \
+    "${remote_cleanup_filters[@]}" \
+    --log-file "$LOG_PATH" \
+    --log-level INFO || log "remote cleanup of minute/debug/motion exports failed"
 else
   log "sync failed with status $status"
 fi
