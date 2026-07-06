@@ -35,14 +35,33 @@ class TimeKeeper:
         self.store = store
 
     def now(self, fallback_step: timedelta = timedelta(minutes=5)) -> TimeReading:
-        gps = self._read_gps_time()
-        rtc = self._read_rtc_time()
+        raw_gps = self._read_gps_time()
+        raw_rtc = self._read_rtc_time()
+        raw_ntp = self._read_ntp_time()
+        gps = raw_gps if self._is_plausible(raw_gps) else None
+        rtc = raw_rtc if self._is_plausible(raw_rtc) else None
+        ntp = raw_ntp if self._is_plausible(raw_ntp) else None
         state = self.store.get_time_state()
         bad_count = int(state["bad_gps_count"])
+
+        if gps and raw_rtc and not rtc:
+            self._write_rtc_time(gps)
+            self.store.update_time_state(gps, 0)
+            return TimeReading(gps, "gps_rtc_resync", "RTC date was outside valid deployment range; RTC resynced")
+
+        if ntp and raw_rtc and not rtc:
+            self._write_rtc_time(ntp)
+            self.store.update_time_state(ntp, bad_count)
+            return TimeReading(ntp, "ntp_rtc_resync", "RTC date was outside valid deployment range; RTC resynced")
 
         if gps and rtc:
             drift = abs((gps - rtc).total_seconds()) / 60
             if drift >= self.config.large_drift_minutes:
+                absurd_drift_minutes = max(0.0, float(self.config.gps_absurd_drift_hours)) * 60
+                if absurd_drift_minutes and drift >= absurd_drift_minutes:
+                    self._write_rtc_time(gps)
+                    self.store.update_time_state(gps, 0)
+                    return TimeReading(gps, "gps_rtc_resync", f"GPS/RTC drift {drift:.1f} min; RTC resynced")
                 bad_count += 1
                 if bad_count >= self.config.gps_large_drift_sync_count:
                     self._write_rtc_time(gps)
@@ -61,14 +80,35 @@ class TimeKeeper:
             self.store.update_time_state(gps, 0)
             return TimeReading(gps, "gps")
 
+        if ntp and rtc:
+            drift = abs((ntp - rtc).total_seconds()) / 60
+            if drift >= self.config.small_drift_minutes:
+                self._write_rtc_time(ntp)
+                self.store.update_time_state(ntp, bad_count)
+                return TimeReading(ntp, "ntp_rtc_corrected", f"RTC corrected from NTP; drift {drift:.1f} min")
+            self.store.update_time_state(ntp, bad_count)
+            return TimeReading(ntp, "ntp")
+
+        if ntp:
+            self.store.update_time_state(ntp, bad_count)
+            return TimeReading(ntp, "ntp")
+
         if rtc:
             self.store.update_time_state(rtc, bad_count)
             return TimeReading(rtc, "rtc")
 
         last = state["last_timestamp_utc"]
         fallback = (from_iso(last) + fallback_step) if last else utc_now()
+        if not self._is_plausible(fallback):
+            fallback = utc_now()
         self.store.update_time_state(fallback, bad_count)
         return TimeReading(fallback, "estimated", "GPS and RTC unavailable")
+
+    def _is_plausible(self, timestamp: datetime | None) -> bool:
+        if timestamp is None:
+            return False
+        minimum = int(self.config.min_valid_year or 0)
+        return minimum <= 0 or timestamp.year >= minimum
 
     def _read_gps_time(self) -> datetime | None:
         if not self.config.gps_enabled:
@@ -99,6 +139,23 @@ class TimeKeeper:
             except ValueError:
                 continue
         return None
+
+    def _read_ntp_time(self) -> datetime | None:
+        if not self.config.ntp_enabled:
+            return None
+        command = shlex.split(self.config.ntp_status_command)
+        if not command:
+            return None
+        try:
+            proc = subprocess.run(command, check=False, capture_output=True, text=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if proc.returncode != 0:
+            return None
+        synced = proc.stdout.strip().lower()
+        if synced not in {"yes", "true", "1"}:
+            return None
+        return utc_now()
 
     def read_gps_coordinates(self, fix_count: int | None = None, timeout_seconds: int | None = None) -> list[CoordinateFix]:
         if not self.config.gps_enabled:

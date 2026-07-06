@@ -2,19 +2,23 @@ from __future__ import annotations
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event, Lock, Thread
+import csv
 import json
 import logging
 import math
+import os
 import shutil
 import shlex
 import subprocess
 import time
 import wave
 
+from .acoustic_indices import AcousticIndexResult, calculate_acoustic_indices
 from .ai import (
     BirdNetAudioJob,
     BirdNetRunner,
@@ -38,6 +42,26 @@ from .timekeeper import TimeKeeper
 
 LOGGER = logging.getLogger(__name__)
 UTC = timezone.utc
+
+ENVIRONMENT_SAMPLE_FIELDS = (
+    "timestamp_utc",
+    "timestamp_source",
+    "system_timestamp_utc",
+    "monotonic_seconds",
+    "boot_id",
+    "temperature_c",
+    "humidity_pct",
+    "pressure_mmhg",
+    "lux",
+    "co2_ppm",
+    "pm1_0_ug_m3",
+    "pm2_5_ug_m3",
+    "pm10_ug_m3",
+    "particles_0_3_per_l",
+    "particles_0_5_per_l",
+    "cpu_temp_c",
+    "errors",
+)
 
 
 class StationService:
@@ -88,6 +112,7 @@ class StationService:
         self._current_latitude = config.time.fallback_latitude
         self._current_longitude = config.time.fallback_longitude
         self._coordinate_source = "fallback"
+        self._boot_id = _current_boot_id()
         self._load_initial_coordinate_state()
 
     def _load_initial_coordinate_state(self) -> None:
@@ -124,8 +149,13 @@ class StationService:
         LOGGER.info("Juara station service started at %s", self.paths.root)
         try:
             while True:
-                self._ensure_motion_watcher()
-                self.run_interval()
+                try:
+                    self._ensure_motion_watcher()
+                    self.run_interval()
+                except Exception as exc:
+                    LOGGER.exception("Station interval crashed; recording failure and continuing")
+                    self._record_interval_crash(exc)
+                    time.sleep(5)
         finally:
             self._scheduled_stop.set()
             self._audio_worker_stop.set()
@@ -180,14 +210,17 @@ class StationService:
         LOGGER.warning("USB storage became available; station outputs switched to %s", self.paths.root)
 
     def _copy_fallback_media_to_usb(self, target_paths: StationPaths) -> None:
-        fallback_photos = self.paths.photos_dir
-        if not fallback_photos.exists():
+        self._copy_fallback_media_tree_to_usb(self.paths.photos_dir, target_paths.photos_dir)
+        self._copy_fallback_media_tree_to_usb(self.paths.survey_photos_dir, target_paths.survey_photos_dir)
+
+    def _copy_fallback_media_tree_to_usb(self, source_root: Path, target_root: Path) -> None:
+        if not source_root.exists():
             return
-        for source in fallback_photos.glob("**/*"):
+        for source in source_root.glob("**/*"):
             if not source.is_file():
                 continue
-            relative = source.relative_to(fallback_photos)
-            target = target_paths.photos_dir / relative
+            relative = source.relative_to(source_root)
+            target = target_root / relative
             if target.exists():
                 continue
             try:
@@ -232,6 +265,30 @@ class StationService:
         except Exception:
             LOGGER.exception("%s reboot command failed", reason)
 
+    def _record_interval_crash(self, exc: Exception) -> None:
+        try:
+            reading = self.timekeeper.now(fallback_step=timedelta(seconds=self.config.schedule.interval_seconds))
+            timestamp = reading.timestamp
+            timestamp_source = reading.source
+        except Exception:
+            timestamp = utc_now()
+            timestamp_source = "system"
+        period_start = floor_time(timestamp, self.config.schedule.interval_seconds)
+        period_end = period_start + timedelta(seconds=self.config.schedule.interval_seconds)
+        try:
+            self.store.upsert_interval_summary(
+                period_start,
+                period_end,
+                timestamp,
+                timestamp_source,
+                f"interval crash: {type(exc).__name__}",
+            )
+            self.store.set_interval_system_event(period_start, "STATION_INTERVAL_CRASH")
+            self.store.add_interval_error(period_start, "Station Interval Crash", source="service", details=str(exc))
+            self._export_day(period_start.astimezone(self.config.zoneinfo).date())
+        except Exception:
+            LOGGER.exception("Unable to record station interval crash")
+
     def run_interval(self, duration_seconds: int | None = None, simulate_motion: bool = False) -> Path:
         duration = duration_seconds or self.config.schedule.interval_seconds
         self._maybe_switch_storage_root()
@@ -263,7 +320,7 @@ class StationService:
         audio_result = None
         audio_paused_reason = self._audio_paused_reason(local_start)
         if audio_paused_reason:
-            self._sample_until(period_end, duration)
+            self._sample_until(period_end, duration, reading.timestamp, reading.source)
             self.store.upsert_audio_event(
                 period_start,
                 "recording_paused",
@@ -278,7 +335,7 @@ class StationService:
             audio_path = self._audio_path(period_start)
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(self.audio.record, audio_path, duration, night)
-                self._sample_until(period_end, duration)
+                self._sample_until(period_end, duration, reading.timestamp, reading.source)
                 audio_result = future.result()
 
             self.store.upsert_audio_event(
@@ -317,6 +374,8 @@ class StationService:
                     self.process_audio_event(period_start, audio_result.path, night)
                 elif self.config.birdnet.run_in_station_service:
                     self._ensure_audio_worker()
+            elif audio_result.status == "recorded" and audio_result.path:
+                self._save_acoustic_indices(period_start, audio_result.path)
 
         if self.mock:
             changed_days.update(self.process_image_backlog(now=utc_now()))
@@ -339,7 +398,7 @@ class StationService:
         timestamp: datetime,
         duration_seconds: int,
     ) -> Path:
-        self._sample_cpu_only_until(duration_seconds)
+        self._sample_until(period_end, duration_seconds, timestamp, "system")
         self.store.upsert_audio_event(
             period_start,
             "recording_paused",
@@ -699,10 +758,19 @@ class StationService:
                 LOGGER.debug("Motion watcher cleanup after failed start failed", exc_info=True)
             LOGGER.exception("Motion detector unavailable; will retry on the next interval")
 
+    def _save_acoustic_indices(self, period_start: datetime, audio_path: Path) -> None:
+        try:
+            indices = calculate_acoustic_indices(audio_path)
+        except Exception as exc:
+            LOGGER.warning("Acoustic index calculation failed for %s: %s", audio_path, exc, exc_info=True)
+            indices = AcousticIndexResult.from_error(str(exc))
+        self.store.save_acoustic_indices(period_start, indices)
+
     def process_audio_event(self, period_start: datetime, audio_path: Path, night: bool) -> None:
         if not audio_path.exists():
             self._mark_missing_audio(period_start, audio_path)
             return
+        self._save_acoustic_indices(period_start, audio_path)
         output_dir = self.paths.ai_work_dir / "birdnet" / period_start.strftime("%Y%m%d_%H%M%S")
         try:
             calls = self.birdnet.analyze_audio(audio_path, output_dir, period_start, night)
@@ -792,6 +860,8 @@ class StationService:
                 if self._cooldown_marker_exists():
                     LOGGER.warning("Stopping BirdNET backlog before next batch because CPU cooldown marker is active")
                     break
+                for job, _row in group["jobs"]:
+                    self._save_acoustic_indices(job.period_start, job.audio_path)
                 try:
                     batch_detections = self.birdnet.analyze_audio_batch(
                         [job for job, _row in group["jobs"]],
@@ -840,6 +910,10 @@ class StationService:
     def _mark_missing_audio(self, period_start: datetime, audio_path: Path) -> None:
         LOGGER.warning("Skipping missing audio recording for %s: %s", period_start.isoformat(), audio_path)
         self.store.save_bird_calls(period_start, [])
+        self.store.save_acoustic_indices(
+            period_start,
+            AcousticIndexResult.from_error(f"Missing audio recording: {audio_path}"),
+        )
         self.store.upsert_audio_event(
             period_start,
             "missing_audio",
@@ -1488,7 +1562,7 @@ class StationService:
             period_start = floor_time(triggered_at, self.config.schedule.interval_seconds)
             night = self._is_night(local_trigger)
             photo_id = self.store.create_photo_event(period_start, triggered_at, target_at)
-            path = self._photo_path(triggered_at, photo_id)
+            path = self._photo_path(triggered_at, photo_id, source=source)
             target_monotonic_ns = time.monotonic_ns() + int(delay_seconds * 1e9)
             LOGGER.info(
                 "%s photo trigger id=%s trigger=%s target_delay_seconds=%.3f target=%s",
@@ -1518,6 +1592,7 @@ class StationService:
                 if result.status == "captured" and result.path:
                     trigger_latency = (result.captured_at - triggered_at).total_seconds()
                     target_offset = (result.captured_at - target_at).total_seconds()
+                    photo_diagnostics = self._photo_diagnostics(result)
                     LOGGER.info(
                         "%s photo captured id=%s trigger_to_capture_seconds=%.3f target_offset_seconds=%.3f path=%s",
                         source.capitalize(),
@@ -1534,6 +1609,7 @@ class StationService:
                         ai_status=next_ai_status,
                         captured_at_utc=result.captured_at,
                         path=str(result.path),
+                        **photo_diagnostics,
                     )
                 else:
                     self.store.update_photo_event(photo_id, status="error", ai_status="error", error=result.error)
@@ -1569,6 +1645,23 @@ class StationService:
     def _current_day_camera_mode(self) -> CameraModeConfig:
         with self._day_camera_mode_lock:
             return self._day_camera_mode
+
+    def _photo_diagnostics(self, result) -> dict:
+        diagnostics = {
+            "ambient_lux": None,
+            "camera_exposure_us": result.exposure_time_us,
+            "camera_analogue_gain": result.analogue_gain,
+            "camera_digital_gain": result.digital_gain,
+            "camera_lux": result.camera_lux,
+            "camera_ae_locked": None if result.ae_locked is None else int(result.ae_locked),
+        }
+        try:
+            diagnostics["ambient_lux"] = self.store.latest_lux_before(result.captured_at)
+        except Exception:
+            LOGGER.exception("Unable to attach ambient lux to photo diagnostics")
+        if result.path is not None:
+            diagnostics.update(_photo_luma_stats(result.path))
+        return diagnostics
 
     def _set_day_camera_mode(self, mode: CameraModeConfig) -> None:
         with self._day_camera_mode_lock:
@@ -1723,12 +1816,21 @@ class StationService:
         )
         return mode
 
-    def _sample_until(self, period_end: datetime, duration_seconds: int) -> None:
+    def _sample_until(
+        self,
+        period_end: datetime,
+        duration_seconds: int,
+        timestamp_start: datetime | None = None,
+        timestamp_source: str = "system",
+    ) -> None:
         deadline = time.monotonic() + duration_seconds
+        timestamp_monotonic_start = time.monotonic()
         sample_every = max(1, self.config.schedule.sensor_sample_seconds)
         while True:
             try:
-                sample = self.sensors.sample()
+                raw_sample = self.sensors.sample()
+                sample = self._sample_with_station_time(raw_sample, timestamp_start, timestamp_monotonic_start)
+                self._append_environment_sample(sample, timestamp_source, raw_sample.sampled_at)
                 self.store.insert_sensor_sample(sample)
                 self._update_cooldown_counts(sample.cpu_temp_c)
                 sample_period = floor_time(sample.sampled_at, self.config.schedule.interval_seconds)
@@ -1745,6 +1847,56 @@ class StationService:
             if remaining <= 0:
                 break
             time.sleep(min(sample_every, remaining))
+
+    def _sample_with_station_time(
+        self,
+        sample: SensorSample,
+        timestamp_start: datetime | None,
+        timestamp_monotonic_start: float,
+    ) -> SensorSample:
+        if timestamp_start is None:
+            return sample
+        elapsed = max(0.0, time.monotonic() - timestamp_monotonic_start)
+        return replace(sample, sampled_at=timestamp_start + timedelta(seconds=elapsed))
+
+    def _append_environment_sample(
+        self,
+        sample: SensorSample,
+        timestamp_source: str,
+        system_sampled_at: datetime,
+    ) -> None:
+        path = self.paths.logs_dir / self.config.storage.environment_csv_filename
+        row = {
+            "timestamp_utc": to_utc_iso(sample.sampled_at),
+            "timestamp_source": timestamp_source,
+            "system_timestamp_utc": to_utc_iso(system_sampled_at),
+            "monotonic_seconds": f"{time.monotonic():.3f}",
+            "boot_id": self._boot_id,
+            "temperature_c": sample.temperature_c,
+            "humidity_pct": sample.humidity_pct,
+            "pressure_mmhg": sample.pressure_mmhg,
+            "lux": sample.lux,
+            "co2_ppm": sample.co2_ppm,
+            "pm1_0_ug_m3": sample.pm1_0_ug_m3,
+            "pm2_5_ug_m3": sample.pm2_5_ug_m3,
+            "pm10_ug_m3": sample.pm10_ug_m3,
+            "particles_0_3_per_l": sample.particles_0_3_per_l,
+            "particles_0_5_per_l": sample.particles_0_5_per_l,
+            "cpu_temp_c": sample.cpu_temp_c,
+            "errors": "; ".join(sample.errors),
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            needs_header = not path.exists() or path.stat().st_size == 0
+            with path.open("a", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=ENVIRONMENT_SAMPLE_FIELDS)
+                if needs_header:
+                    writer.writeheader()
+                writer.writerow(row)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception:
+            LOGGER.exception("Raw environmental sample CSV append failed")
 
     def _sample_cpu_only_until(self, duration_seconds: int) -> None:
         deadline = time.monotonic() + duration_seconds
@@ -1945,12 +2097,14 @@ class StationService:
         local = period_start.astimezone(self.config.zoneinfo)
         return self.paths.recordings_dir / local.strftime("%Y-%m-%d") / f"{local.strftime('%Y%m%d_%H%M%S')}.wav"
 
-    def _photo_path(self, triggered_at: datetime, photo_id: int) -> Path:
+    def _photo_path(self, triggered_at: datetime, photo_id: int, source: str = "motion") -> Path:
         local = triggered_at.astimezone(self.config.zoneinfo)
-        filename = f"{local.strftime('%Y%m%d_%H%M%S')}_pic{photo_id:03d}.jpg"
+        prefix = "survey" if source == "scheduled" else "pic"
+        filename = f"{local.strftime('%Y%m%d_%H%M%S')}_{prefix}{photo_id:03d}.jpg"
+        photos_dir = self.paths.survey_photos_dir if source == "scheduled" else self.paths.photos_dir
         if self.config.storage.photo_date_subdirs:
-            return self.paths.photos_dir / local.strftime("%Y-%m-%d") / filename
-        return self.paths.photos_dir / filename
+            return photos_dir / local.strftime("%Y-%m-%d") / filename
+        return photos_dir / filename
 
 
 def floor_time(value: datetime, interval_seconds: int) -> datetime:
@@ -2041,6 +2195,32 @@ def _day_camera_scan_score(
     gain_penalty = gain * 1.6
     contrast_bonus = min(25.0, stddev_luma) * 0.15
     return brightness_penalty + clipping_penalty + speed_penalty + gain_penalty - contrast_bonus
+
+
+def _photo_luma_stats(path: Path) -> dict[str, float | int | None]:
+    try:
+        from PIL import Image, ImageStat
+    except Exception:
+        LOGGER.exception("PIL is unavailable; cannot compute photo diagnostics")
+        return {}
+
+    try:
+        with Image.open(path) as image:
+            gray = image.convert("L")
+            stat = ImageStat.Stat(gray)
+            histogram = gray.histogram()
+            pixels = max(1, gray.width * gray.height)
+            extrema = gray.getextrema()
+        return {
+            "image_mean_luma": float(stat.mean[0]),
+            "image_min_luma": int(extrema[0]),
+            "image_max_luma": int(extrema[1]),
+            "image_dark_pct": sum(histogram[:8]) * 100.0 / pixels,
+            "image_bright_pct": sum(histogram[248:]) * 100.0 / pixels,
+        }
+    except Exception:
+        LOGGER.exception("Unable to compute photo diagnostics for %s", path)
+        return {}
 
 
 def _speciesnet_failure_is_terminal(exc: Exception) -> bool:

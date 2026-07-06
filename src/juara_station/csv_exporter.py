@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import csv
 
+from .acoustic_indices import ACOUSTIC_INDEX_COLUMNS
 from .paths import atomic_replace_text
 from .storage import DataStore, from_iso
 
@@ -15,6 +16,27 @@ from .storage import DataStore, from_iso
 MMHG_PER_INHG = 25.4
 MAX_BIRD_CALL_COLUMNS = 90
 CALL_COLUMNS = [f"Call {index}" for index in range(1, MAX_BIRD_CALL_COLUMNS + 1)]
+PHOTO_DIAGNOSTIC_COLUMNS = [
+    "triggered_at",
+    "captured_at",
+    "status",
+    "ai_status",
+    "ambient_lux",
+    "camera_exposure_us",
+    "camera_analogue_gain",
+    "camera_digital_gain",
+    "camera_lux",
+    "camera_ae_locked",
+    "image_mean_luma",
+    "image_min_luma",
+    "image_max_luma",
+    "image_dark_pct",
+    "image_bright_pct",
+    "path",
+    "animal_name",
+    "confidence",
+    "error",
+]
 
 
 @dataclass(frozen=True)
@@ -49,6 +71,7 @@ CSV_COLUMNS = [
     "bird_shannon_index",
     "bird_simpson_index",
     "bird_pielou_evenness",
+    *ACOUSTIC_INDEX_COLUMNS,
     "audio_status",
     "bird_calls_truncated",
     *CALL_COLUMNS,
@@ -73,6 +96,7 @@ JUNE_CAMERA_TRAP_COLUMNS = [
     "shannon_index",
     "simpsons_index",
     "pielou_evenness",
+    *ACOUSTIC_INDEX_COLUMNS,
     "Audio_status",
     *CALL_COLUMNS,
     "",
@@ -119,9 +143,21 @@ def export_main_csv(
             writer.writerow(_row_to_csv(row, zone, bird_calls))
     path = logs_dir / options.filename
     atomic_replace_text(path, output.getvalue())
+    export_photo_diagnostics_csv(store, logs_dir, zone)
     for old_path in logs_dir.glob("*_juara_station.csv"):
         old_path.unlink(missing_ok=True)
     _remove_bird_calls_csv(logs_dir)
+    return path
+
+
+def export_photo_diagnostics_csv(store: DataStore, logs_dir: Path, zone: ZoneInfo) -> Path:
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=PHOTO_DIAGNOSTIC_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for row in store.list_photo_events():
+        writer.writerow(_photo_event_to_csv(row, zone))
+    path = logs_dir / "juara_photo_diagnostics.csv"
+    atomic_replace_text(path, output.getvalue())
     return path
 
 
@@ -129,6 +165,31 @@ def _remove_bird_calls_csv(logs_dir: Path) -> None:
     (logs_dir / "juara_bird_calls.csv").unlink(missing_ok=True)
     for old_path in logs_dir.glob("*_juara_bird_calls.csv"):
         old_path.unlink(missing_ok=True)
+
+
+def _photo_event_to_csv(row, zone: ZoneInfo) -> dict[str, str | int | float | None]:
+    captured_at = row["captured_at_utc"]
+    return {
+        "triggered_at": from_iso(row["triggered_at_utc"]).astimezone(zone).strftime("%Y-%m-%dT%H:%M:%S"),
+        "captured_at": from_iso(captured_at).astimezone(zone).strftime("%Y-%m-%dT%H:%M:%S") if captured_at else "",
+        "status": row["status"],
+        "ai_status": row["ai_status"],
+        "ambient_lux": _round(row["ambient_lux"]),
+        "camera_exposure_us": row["camera_exposure_us"] or "",
+        "camera_analogue_gain": _round(row["camera_analogue_gain"]),
+        "camera_digital_gain": _round(row["camera_digital_gain"]),
+        "camera_lux": _round(row["camera_lux"]),
+        "camera_ae_locked": "" if row["camera_ae_locked"] is None else int(row["camera_ae_locked"]),
+        "image_mean_luma": _round(row["image_mean_luma"]),
+        "image_min_luma": row["image_min_luma"] if row["image_min_luma"] is not None else "",
+        "image_max_luma": row["image_max_luma"] if row["image_max_luma"] is not None else "",
+        "image_dark_pct": _round(row["image_dark_pct"]),
+        "image_bright_pct": _round(row["image_bright_pct"]),
+        "path": row["path"] or "",
+        "animal_name": row["animal_name"] or "",
+        "confidence": _round(row["confidence"]),
+        "error": row["error"] or "",
+    }
 
 
 def _coalesce_event_only_rows(rows, interval_seconds: int) -> list[dict]:
@@ -182,6 +243,7 @@ def _is_event_only_row(row: dict) -> bool:
         "bird_simpson_index",
         "bird_pielou_evenness",
         "bird_call_cells",
+        *ACOUSTIC_INDEX_COLUMNS,
         "audio_path",
         "animal_summary",
         "camera_status",
@@ -240,6 +302,7 @@ def _row_to_csv(row, zone: ZoneInfo, bird_calls: list[dict] | None = None) -> di
         "bird_shannon_index": _round(row["bird_shannon_index"]),
         "bird_simpson_index": _round(row["bird_simpson_index"]),
         "bird_pielou_evenness": _round(row["bird_pielou_evenness"]),
+        **_acoustic_csv_values(row),
         "audio_status": row["audio_status"] or "",
         "bird_calls_truncated": "" if row["system_event"] else truncated,
     }
@@ -280,6 +343,7 @@ def _row_to_june_csv(
         "shannon_index": _round(row["bird_shannon_index"]),
         "simpsons_index": _round(row["bird_simpson_index"]),
         "pielou_evenness": _round(row["bird_pielou_evenness"]),
+        **_acoustic_csv_values(row),
         "Audio_status": _june_audio_status(row["audio_status"] or ""),
         "": "",
         "Errors": "\n".join(error for error in errors if error),
@@ -340,6 +404,21 @@ def _round(value: float | None) -> str:
     if value is None:
         return ""
     return f"{value:.3f}"
+
+
+def _acoustic_csv_values(row) -> dict[str, str | int | float | None]:
+    output = {}
+    integer_fields = {"acoustic_sample_rate_hz", "acoustic_n_fft", "acoustic_hop_length"}
+    text_fields = {"acoustic_index_version", "acoustic_index_error"}
+    for column in ACOUSTIC_INDEX_COLUMNS:
+        value = row[column]
+        if column in text_fields:
+            output[column] = value or ""
+        elif column in integer_fields:
+            output[column] = value if value is not None else ""
+        else:
+            output[column] = _round(value)
+    return output
 
 
 def _mmhg_to_inhg(value: float | None) -> float | None:

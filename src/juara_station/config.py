@@ -29,9 +29,11 @@ class StorageConfig:
     recording_root: Path | None = None
     logs_subdir: str = "logs"
     photos_subdir: str = "media/photos"
+    survey_photos_subdir: str = "media/survey_photos"
     photo_date_subdirs: bool = True
     require_usb: bool = False
     csv_filename: str = "juara_station.csv"
+    environment_csv_filename: str = "juara_environment_samples.csv"
     csv_profile: str = "standard"
 
 
@@ -74,6 +76,7 @@ class CameraModeConfig:
     denoise: str | None = None
     auto_exposure: bool = False
     exposure_value: float | None = None
+    max_exposure_us: int | None = None
 
 
 @dataclass(frozen=True)
@@ -157,8 +160,12 @@ class SensorConfig:
 class TimeConfig:
     gps_enabled: bool = True
     gps_command: str = "gpspipe"
+    ntp_enabled: bool = True
+    ntp_status_command: str = "/usr/bin/timedatectl show -p NTPSynchronized --value"
     rtc_read_command: str = "/usr/sbin/hwclock"
     rtc_write_enabled: bool = True
+    min_valid_year: int = 2026
+    gps_absurd_drift_hours: float = 24.0
     large_drift_minutes: float = 5.0
     small_drift_minutes: float = 1.0
     gps_large_drift_sync_count: int = 3
@@ -180,6 +187,7 @@ class BirdNetConfig:
     backend: str = "birdnet"
     python: str | None = None
     species_list_path: str | None = None
+    species_filter_mode: str = "generated_list"
     run_in_station_service: bool = False
     use_subprocess: bool = False
     prewarm_at_start: bool = True

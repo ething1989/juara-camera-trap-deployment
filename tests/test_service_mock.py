@@ -55,6 +55,15 @@ def test_mock_interval_creates_csv_audio_and_photo(tmp_path: Path):
     assert not list(service.paths.recordings_dir.glob("**/*.wav"))
     assert list((tmp_path / "usb" / "media" / "photos").glob("**/*.jpg"))
     assert "Hyacinth macaw" in csv_path.read_text() or "Pauraque" in csv_path.read_text()
+    env_path = tmp_path / "usb" / "logs" / "juara_environment_samples.csv"
+    env_rows = list(csv.DictReader(env_path.open()))
+    assert env_rows
+    assert env_rows[0]["timestamp_utc"]
+    assert env_rows[0]["timestamp_source"]
+    assert env_rows[0]["system_timestamp_utc"]
+    assert env_rows[0]["temperature_c"]
+    assert env_rows[0]["humidity_pct"]
+    assert env_rows[0]["lux"]
 
 
 def test_pi1_config_uses_day_auto_exposure_without_scan():
@@ -96,7 +105,7 @@ def test_scheduled_capture_keeps_photo_without_speciesnet(tmp_path: Path):
 
     service._capture_scheduled_photo()
 
-    assert list((tmp_path / "usb" / "media" / "photos").glob("**/*.jpg"))
+    assert list((tmp_path / "usb" / "media" / "survey_photos").glob("**/*.jpg"))
     rows = service.store.pending_photo_events()
     assert rows == []
 

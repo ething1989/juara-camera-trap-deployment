@@ -17,6 +17,7 @@ class StationPaths:
     recording_root: Path | None = None
     logs_subdir: str = "logs"
     photos_subdir: str = "media/photos"
+    survey_photos_subdir: str = "media/survey_photos"
     fallback_active: bool = False
 
     def _subdir_path(self, value: str) -> Path:
@@ -42,6 +43,10 @@ class StationPaths:
         return self._subdir_path(self.photos_subdir)
 
     @property
+    def survey_photos_dir(self) -> Path:
+        return self._subdir_path(self.survey_photos_subdir)
+
+    @property
     def audio_dir(self) -> Path:
         return self.media_dir / "audio"
 
@@ -62,7 +67,14 @@ class StationPaths:
         return self.state_dir / "station.sqlite3"
 
     def ensure(self) -> None:
-        for path in [self.state_dir, self.logs_dir, self.photos_dir, self.ai_work_dir, self.recordings_dir]:
+        for path in [
+            self.state_dir,
+            self.logs_dir,
+            self.photos_dir,
+            self.survey_photos_dir,
+            self.ai_work_dir,
+            self.recordings_dir,
+        ]:
             path.mkdir(parents=True, exist_ok=True)
         if self.audio_dir != self.recordings_dir:
             shutil.rmtree(self.audio_dir, ignore_errors=True)
@@ -79,6 +91,7 @@ def resolve_paths(storage: StorageConfig) -> StationPaths:
             storage.recording_root,
             storage.logs_subdir,
             storage.photos_subdir,
+            storage.survey_photos_subdir,
             fallback_active=False,
         )
         paths.ensure()
@@ -95,6 +108,7 @@ def resolve_paths(storage: StorageConfig) -> StationPaths:
         storage.recording_root,
         storage.logs_subdir,
         storage.photos_subdir,
+        storage.survey_photos_subdir,
         fallback_active=True,
     )
     fallback.ensure()
@@ -115,7 +129,10 @@ def _is_writable_dir(path: Path) -> bool:
 
 def _storage_root_mount_ready(path: Path) -> bool:
     mount_root = _mount_root_for_storage(path)
-    return mount_root is None or mount_root.is_mount()
+    try:
+        return mount_root is None or mount_root.is_mount()
+    except OSError:
+        return False
 
 
 def _mount_root_for_storage(path: Path) -> Path | None:

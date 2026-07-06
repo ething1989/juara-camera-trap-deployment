@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from juara_station.acoustic_indices import ACOUSTIC_INDEX_VERSION, AcousticIndexResult
 from juara_station.csv_exporter import export_day_csv
 from juara_station.storage import BirdCall, BirdCandidate, DataStore, SensorSample
 
@@ -35,8 +36,48 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
             BirdCall(3.0, 6.0, (BirdCandidate("Hyacinth macaw", 0.70),)),
         ],
     )
+    store.save_acoustic_indices(
+        start,
+        AcousticIndexResult(
+            acoustic_duration_s=300.0,
+            acoustic_sample_rate_hz=48000,
+            acoustic_n_fft=1024,
+            acoustic_hop_length=512,
+            acoustic_fmin_hz=0.0,
+            acoustic_fmax_hz=10000.0,
+            acoustic_db_threshold=-50.0,
+            acoustic_activity=0.1234,
+            acoustic_aci=12.3456,
+            acoustic_adi=1.2345,
+            acoustic_aei=0.3456,
+            acoustic_bioacoustic_index=4.5678,
+            acoustic_ndsi=0.2345,
+            acoustic_ndsi_anthrophony=1.0,
+            acoustic_ndsi_biophony=1.6,
+            acoustic_entropy_h=0.4567,
+            acoustic_entropy_ht=0.7654,
+            acoustic_entropy_hf=0.5967,
+            acoustic_rms=0.0567,
+        ),
+    )
     photo_id = store.create_photo_event(start, start, start)
-    store.update_photo_event(photo_id, status="kept", animal_name="Giant anteater", confidence=0.82)
+    store.update_photo_event(
+        photo_id,
+        status="kept",
+        animal_name="Giant anteater",
+        confidence=0.82,
+        ambient_lux=1000.0,
+        camera_exposure_us=4321,
+        camera_analogue_gain=1.5,
+        camera_digital_gain=1.02,
+        camera_lux=120.0,
+        camera_ae_locked=1,
+        image_mean_luma=128.5,
+        image_min_luma=4,
+        image_max_luma=250,
+        image_dark_pct=0.1,
+        image_bright_pct=2.5,
+    )
     store.upsert_interval_summary(start, end, start, "gps")
     no_detection_start = start + timedelta(minutes=5)
     no_detection_end = no_detection_start + timedelta(minutes=5)
@@ -65,14 +106,22 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
     assert "2026-05-10T08:00:00" in text
     assert "Call 1" in text
     assert "Call 90" in text
+    assert "acoustic_adi" in text
     assert "Giant anteater(count: 1, Conf. 82.0%)" not in text
     header = list(rows[0].keys())
     assert header.index("co2_ppm_avg") == header.index("lux_avg") + 1
     assert header.index("photos_taken") == header.index("cpu_temp_c_avg") + 1
+    assert header.index("acoustic_index_version") == header.index("bird_pielou_evenness") + 1
     assert rows[0]["pressure_inhg_avg"] == "29.921"
     assert rows[0]["co2_ppm_avg"] == "432.000"
     assert rows[0]["photos_taken"] == "1"
     assert rows[0]["bird_top_species"] == "Hyacinth macaw(Calls: 2, Conf: 72.5%)"
+    assert rows[0]["acoustic_index_version"] == ACOUSTIC_INDEX_VERSION
+    assert rows[0]["acoustic_duration_s"] == "300.000"
+    assert rows[0]["acoustic_sample_rate_hz"] == "48000"
+    assert rows[0]["acoustic_aci"] == "12.346"
+    assert rows[0]["acoustic_adi"] == "1.234"
+    assert rows[0]["acoustic_ndsi"] == "0.234"
     assert rows[0]["bird_calls_truncated"] == "0"
     assert rows[0]["Call 1"] == "Hyacinth macaw (75.0%)\nBlue-and-yellow macaw (12.0%)"
     assert rows[0]["Call 2"] == "Hyacinth macaw (70.0%)"
@@ -83,8 +132,16 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
     assert rows[2]["system_event"] == "PI_RESTARTED"
     assert rows[2]["timestamp_source"] == "rtc"
     assert rows[2]["photos_taken"] == ""
+    assert rows[2]["acoustic_adi"] == ""
     assert rows[2]["bird_calls_truncated"] == ""
     assert not (tmp_path / "juara_bird_calls.csv").exists()
+
+    photo_rows = list(csv.DictReader(StringIO((tmp_path / "juara_photo_diagnostics.csv").read_text())))
+    assert photo_rows[0]["ambient_lux"] == "1000.000"
+    assert photo_rows[0]["camera_exposure_us"] == "4321"
+    assert photo_rows[0]["camera_ae_locked"] == "1"
+    assert photo_rows[0]["image_mean_luma"] == "128.500"
+    assert photo_rows[0]["image_bright_pct"] == "2.500"
 
 
 def test_csv_keeps_strongest_ninety_calls_when_interval_is_busy(tmp_path: Path):

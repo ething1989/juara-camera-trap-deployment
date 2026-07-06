@@ -91,3 +91,38 @@ def test_picamera_auto_exposure_ignores_manual_defaults():
     camera.apply_mode(CameraModeConfig(exposure_us=2000, analogue_gain=1.0, auto_exposure=True, exposure_value=4.0))
 
     assert controls == [{"AeEnable": True, "FrameDurationLimits": (100, 250000), "ExposureValue": 4.0}]
+
+
+def test_picamera_capture_result_includes_metadata(tmp_path: Path):
+    class FakeRequest:
+        def get_metadata(self):
+            return {
+                "ExposureTime": 4321,
+                "AnalogueGain": 1.5,
+                "DigitalGain": 1.02,
+                "Lux": 123.4,
+                "AeLocked": True,
+            }
+
+        def save(self, _stream, path):
+            Path(path).write_bytes(b"photo")
+
+        def release(self):
+            return
+
+    class FakePicam:
+        def capture_request(self, flush=False):
+            assert flush is False
+            return FakeRequest()
+
+    camera = PiCamera2Camera(CameraConfig())
+    camera._picam2 = FakePicam()
+
+    result = camera._capture_once(tmp_path / "photo.jpg")
+
+    assert result.status == "captured"
+    assert result.exposure_time_us == 4321
+    assert result.analogue_gain == 1.5
+    assert result.digital_gain == 1.02
+    assert result.camera_lux == 123.4
+    assert result.ae_locked is True

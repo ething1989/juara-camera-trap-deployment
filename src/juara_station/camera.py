@@ -23,6 +23,11 @@ class CaptureResult:
     captured_at: datetime
     status: str
     error: str | None = None
+    exposure_time_us: int | None = None
+    analogue_gain: float | None = None
+    digital_gain: float | None = None
+    camera_lux: float | None = None
+    ae_locked: bool | None = None
 
 
 class Flash:
@@ -104,6 +109,8 @@ class PiCamera2Camera(Camera):
             delay = max(0, (target_monotonic_ns - time.monotonic_ns()) / 1_000_000_000)
             if delay:
                 time.sleep(delay)
+            while time.monotonic_ns() < target_monotonic_ns:
+                time.sleep(min(0.01, (target_monotonic_ns - time.monotonic_ns()) / 1_000_000_000))
             capture_start = time.monotonic()
             result = self._capture_once_with_timeout(path)
             LOGGER.info(
@@ -153,15 +160,25 @@ class PiCamera2Camera(Camera):
         request = self._picam2.capture_request(flush=False)
         try:
             captured_at = utc_now()
+            metadata = _capture_metadata(request)
             request.save("main", str(path))
-            return CaptureResult(path, captured_at, "captured")
+            return CaptureResult(
+                path,
+                captured_at,
+                "captured",
+                exposure_time_us=_metadata_int(metadata, "ExposureTime"),
+                analogue_gain=_metadata_float(metadata, "AnalogueGain"),
+                digital_gain=_metadata_float(metadata, "DigitalGain"),
+                camera_lux=_metadata_float(metadata, "Lux"),
+                ae_locked=_metadata_bool(metadata, "AeLocked"),
+            )
         finally:
             request.release()
 
     def apply_mode(self, mode: CameraModeConfig) -> None:
         assert self._picam2 is not None
         controls: dict[str, object] = {}
-        max_exposure_us = self._effective_max_exposure_us()
+        max_exposure_us = self._effective_max_exposure_us(mode)
         if mode.auto_exposure:
             controls["AeEnable"] = True
             controls["FrameDurationLimits"] = self._frame_duration_limits(max_exposure_us)
@@ -189,8 +206,9 @@ class PiCamera2Camera(Camera):
         if controls:
             self._picam2.set_controls(controls)
 
-    def _effective_max_exposure_us(self) -> int:
-        max_exposure_us = max(1, int(self.config.max_exposure_us))
+    def _effective_max_exposure_us(self, mode: CameraModeConfig | None = None) -> int:
+        configured = mode.max_exposure_us if mode and mode.max_exposure_us is not None else self.config.max_exposure_us
+        max_exposure_us = max(1, int(configured))
         exposure_range = self._camera_control_range("ExposureTime")
         if exposure_range is not None:
             max_exposure_us = min(max_exposure_us, max(1, int(exposure_range[1])))
@@ -233,6 +251,8 @@ class RpicamStillCamera(Camera):
         delay = max(0, (target_monotonic_ns - time.monotonic_ns()) / 1_000_000_000)
         if delay:
             time.sleep(delay)
+        while time.monotonic_ns() < target_monotonic_ns:
+            time.sleep(min(0.01, (target_monotonic_ns - time.monotonic_ns()) / 1_000_000_000))
         command = [
             self._command,
             "-n",
@@ -245,7 +265,8 @@ class RpicamStillCamera(Camera):
             str(path),
         ]
         if mode.exposure_us is not None and not mode.auto_exposure:
-            command.extend(["--shutter", str(min(int(mode.exposure_us), self.config.max_exposure_us))])
+            max_exposure_us = mode.max_exposure_us if mode.max_exposure_us is not None else self.config.max_exposure_us
+            command.extend(["--shutter", str(min(int(mode.exposure_us), int(max_exposure_us)))])
         if mode.analogue_gain is not None and not mode.auto_exposure:
             command.extend(["--gain", str(float(mode.analogue_gain))])
         if mode.denoise:
@@ -325,6 +346,52 @@ def _noise_reduction_control(name: str):
         }.get(name)
     except Exception:
         return None
+
+
+def _capture_metadata(request) -> dict:
+    try:
+        metadata = request.get_metadata()
+    except Exception:
+        LOGGER.exception("Camera capture metadata unavailable")
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _metadata_float(metadata: dict, key: str) -> float | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_int(metadata: dict, key: str) -> int | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_bool(metadata: dict, key: str) -> bool | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return None
 
 
 def _tiny_jpeg() -> bytes:
