@@ -90,7 +90,7 @@ class CameraConfig:
     pir_gpio: int = 4
     flash_gpio: int = 17
     max_exposure_us: int = 250000
-    capture_timeout_seconds: float = 5.0
+    capture_timeout_seconds: float = 15.0
     warm_restart_interval_seconds: int = 300
     max_photos_per_minute: int = 0
     photo_rate_pause_seconds: int = 60
