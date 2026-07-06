@@ -17,6 +17,7 @@ SETUP_SSID="${JUARA_SETUP_SSID:-NetworkPi}"
 SERVICE_REBOOT_TIMER="${JUARA_SERVICE_REBOOT_TIMER:-juara-service-hourly-reboot.timer}"
 GIT_UPDATE_TIMEOUT_SECONDS="${JUARA_GIT_UPDATE_TIMEOUT_SECONDS:-300}"
 GDRIVE_SYNC_TIMEOUT_SECONDS="${JUARA_GDRIVE_SYNC_TIMEOUT_SECONDS:-300}"
+GDRIVE_SYNC_USER="${JUARA_GDRIVE_SYNC_USER:-}"
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
@@ -88,6 +89,31 @@ run_with_timeout() {
   fi
 }
 
+detect_gdrive_user() {
+  if [ -n "$GDRIVE_SYNC_USER" ]; then
+    printf '%s\n' "$GDRIVE_SYNC_USER"
+    return 0
+  fi
+  for config in /home/*/.config/rclone/rclone.conf; do
+    [ -s "$config" ] || continue
+    basename "$(dirname "$(dirname "$(dirname "$config")")")"
+    return 0
+  done
+  return 1
+}
+
+run_gdrive_sync() {
+  sync_user="$(detect_gdrive_user || true)"
+  if [ "$(id -u)" -eq 0 ] && [ -n "$sync_user" ] && id "$sync_user" >/dev/null 2>&1; then
+    run_with_timeout \
+      "Google Drive sync" \
+      "$GDRIVE_SYNC_TIMEOUT_SECONDS" \
+      sudo -u "$sync_user" env "HOME=/home/$sync_user" /usr/local/bin/juara_gdrive_sync
+  else
+    run_with_timeout "Google Drive sync" "$GDRIVE_SYNC_TIMEOUT_SECONDS" /usr/local/bin/juara_gdrive_sync
+  fi
+}
+
 active_ssid="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1 == "yes" { print $2; exit }')"
 
 if [ "$active_ssid" = "$SETUP_SSID" ]; then
@@ -114,7 +140,7 @@ fi
 if [ "$active_ssid" = "$SETUP_SSID" ]; then
   log "on $SETUP_SSID; running git update and Google Drive sync"
   run_with_timeout "git update" "$GIT_UPDATE_TIMEOUT_SECONDS" /usr/local/bin/juara_git_update
-  run_with_timeout "Google Drive sync" "$GDRIVE_SYNC_TIMEOUT_SECONDS" env JUARA_LOCAL_ROOT="$USB_ROOT" /usr/local/bin/juara_gdrive_sync
+  run_gdrive_sync
 else
   log "not on $SETUP_SSID; skipped git/Drive maintenance (active ssid: ${active_ssid:-none})"
 fi
