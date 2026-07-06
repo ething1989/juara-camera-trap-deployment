@@ -198,6 +198,12 @@ text = path.read_text()
 updated = re.sub(r"^JUARA_LOCAL_ROOT=.*$", "JUARA_LOCAL_ROOT=/var/lib/juara-station/local", text, flags=re.MULTILINE)
 if "JUARA_LOCAL_ROOT=" not in updated:
     updated += "\nJUARA_LOCAL_ROOT=/var/lib/juara-station/local\n"
+updated = re.sub(
+    r"^JUARA_GDRIVE_DIR=([^\"'\n]*\s[^\"'\n]*)$",
+    lambda match: f'JUARA_GDRIVE_DIR="{match.group(1)}"',
+    updated,
+    flags=re.MULTILINE,
+)
 if updated != text:
     path.write_text(updated)
     print(f"updated {path} local root")
