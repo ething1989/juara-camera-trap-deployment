@@ -895,8 +895,26 @@ class DataStore:
                 )
             )
 
-    def list_intervals(self) -> list[sqlite3.Row]:
+    def list_intervals(self, completed_only: bool = False) -> list[sqlite3.Row]:
         with self.connect() as conn:
+            if completed_only:
+                return list(
+                    conn.execute(
+                        """
+                        SELECT intervals.*
+                        FROM intervals
+                        LEFT JOIN audio_events
+                          ON audio_events.period_start_utc = intervals.period_start_utc
+                        WHERE intervals.system_event IS NOT NULL
+                           OR audio_events.ai_status = 'done'
+                           OR (
+                                audio_events.id IS NULL
+                                AND COALESCE(intervals.audio_status, '') NOT IN ('recorded', 'missing_audio')
+                              )
+                        ORDER BY intervals.period_start_utc ASC
+                        """
+                    )
+                )
             return list(conn.execute("SELECT * FROM intervals ORDER BY period_start_utc ASC"))
 
     def list_photo_events(self) -> list[sqlite3.Row]:

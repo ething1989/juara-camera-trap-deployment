@@ -11,6 +11,8 @@ import csv
 from .acoustic_indices import ACOUSTIC_INDEX_COLUMNS
 from .paths import atomic_replace_text
 from .storage import DataStore, from_iso
+from .taxonomy import RANKS as TAXON_RANKS
+from .taxonomy import resolve_taxon, taxon_rank_value
 
 
 MMHG_PER_INHG = 25.4
@@ -47,6 +49,8 @@ class CsvExportOptions:
     latitude: float | None = None
     longitude: float | None = None
     interval_seconds: int = 300
+    birdnet_species_list_path: str | None = None
+    completed_only: bool = True
 
 CSV_COLUMNS = [
     "timestamp",
@@ -68,6 +72,14 @@ CSV_COLUMNS = [
     "bird_total_calls",
     "bird_total_species",
     "bird_top_species",
+    "bird_top_genus",
+    "bird_top_genus_support",
+    "bird_top_family",
+    "bird_top_family_support",
+    "bird_top_order",
+    "bird_top_order_support",
+    "bird_top_group",
+    "bird_top_group_support",
     "bird_shannon_index",
     "bird_simpson_index",
     "bird_pielou_evenness",
@@ -93,6 +105,14 @@ JUNE_CAMERA_TRAP_COLUMNS = [
     "total_calls",
     "total_species",
     "top_species",
+    "top_genus",
+    "top_genus_support",
+    "top_family",
+    "top_family_support",
+    "top_order",
+    "top_order_support",
+    "top_group",
+    "top_group_support",
     "shannon_index",
     "simpsons_index",
     "pielou_evenness",
@@ -123,8 +143,9 @@ def export_main_csv(
     options: CsvExportOptions | None = None,
 ) -> Path:
     options = options or CsvExportOptions(include_photos=include_photos)
-    rows = _coalesce_event_only_rows(store.list_intervals(), options.interval_seconds)
+    rows = _coalesce_event_only_rows(store.list_intervals(completed_only=options.completed_only), options.interval_seconds)
     call_rows_by_interval = _bird_call_rows_by_interval(store)
+    taxon_rollups_by_interval = _bird_taxon_rollups_by_interval(store, options.birdnet_species_list_path)
     errors_by_interval = _errors_by_interval(store)
     columns = list(JUNE_CAMERA_TRAP_COLUMNS if options.profile == "june2026trap" else CSV_COLUMNS)
     if not options.include_photos and "photos_taken" in columns:
@@ -136,11 +157,12 @@ def export_main_csv(
     writer.writeheader()
     for row in rows:
         bird_calls = call_rows_by_interval.get(row["period_start_utc"])
+        taxon_rollup = taxon_rollups_by_interval.get(row["period_start_utc"], {})
         interval_errors = errors_by_interval.get(row["period_start_utc"], [])
         if options.profile == "june2026trap":
-            writer.writerow(_row_to_june_csv(row, zone, bird_calls, interval_errors, options))
+            writer.writerow(_row_to_june_csv(row, zone, bird_calls, taxon_rollup, interval_errors, options))
         else:
-            writer.writerow(_row_to_csv(row, zone, bird_calls))
+            writer.writerow(_row_to_csv(row, zone, bird_calls, taxon_rollup))
     path = logs_dir / options.filename
     atomic_replace_text(path, output.getvalue())
     export_photo_diagnostics_csv(store, logs_dir, zone)
@@ -276,7 +298,12 @@ def _append_csv_events(existing: str | None, event: str | None) -> str:
     return ";".join(parts)
 
 
-def _row_to_csv(row, zone: ZoneInfo, bird_calls: list[dict] | None = None) -> dict[str, str | int | float | None]:
+def _row_to_csv(
+    row,
+    zone: ZoneInfo,
+    bird_calls: list[dict] | None = None,
+    taxon_rollup: dict[str, dict] | None = None,
+) -> dict[str, str | int | float | None]:
     timestamp = from_iso(row["timestamp_utc"]).astimezone(zone).strftime("%Y-%m-%dT%H:%M:%S")
     selected_calls, truncated = _selected_call_cells(bird_calls or [])
     output = {
@@ -299,6 +326,7 @@ def _row_to_csv(row, zone: ZoneInfo, bird_calls: list[dict] | None = None) -> di
         "bird_total_calls": row["bird_total_calls"] or "",
         "bird_total_species": row["bird_total_species"] or "",
         "bird_top_species": row["bird_top_species"] or "",
+        **_taxon_csv_values(taxon_rollup or {}, prefix="bird_"),
         "bird_shannon_index": _round(row["bird_shannon_index"]),
         "bird_simpson_index": _round(row["bird_simpson_index"]),
         "bird_pielou_evenness": _round(row["bird_pielou_evenness"]),
@@ -315,6 +343,7 @@ def _row_to_june_csv(
     row,
     zone: ZoneInfo,
     bird_calls: list[dict] | None = None,
+    taxon_rollup: dict[str, dict] | None = None,
     interval_errors: list[str] | None = None,
     options: CsvExportOptions | None = None,
 ) -> dict[str, str | int | float | None]:
@@ -340,6 +369,7 @@ def _row_to_june_csv(
         "total_calls": row["bird_total_calls"] or "",
         "total_species": row["bird_total_species"] or "",
         "top_species": row["bird_top_species"] or "",
+        **_taxon_csv_values(taxon_rollup or {}, prefix=""),
         "shannon_index": _round(row["bird_shannon_index"]),
         "simpsons_index": _round(row["bird_simpson_index"]),
         "pielou_evenness": _round(row["bird_pielou_evenness"]),
@@ -421,6 +451,17 @@ def _acoustic_csv_values(row) -> dict[str, str | int | float | None]:
     return output
 
 
+def _taxon_csv_values(rollup: dict[str, dict], prefix: str) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for rank in TAXON_RANKS:
+        key = f"{prefix}top_{rank}"
+        support_key = f"{prefix}top_{rank}_support"
+        item = rollup.get(rank) or {}
+        output[key] = item.get("summary", "")
+        output[support_key] = _round(item.get("support"))
+    return output
+
+
 def _mmhg_to_inhg(value: float | None) -> float | None:
     if value is None:
         return None
@@ -444,6 +485,55 @@ def _bird_call_rows_by_interval(store: DataStore) -> dict[str, list[dict]]:
             }
         )
     return output
+
+
+def _bird_taxon_rollups_by_interval(store: DataStore, species_list_path: str | None) -> dict[str, dict[str, dict]]:
+    calls: dict[tuple[str, int], list] = {}
+    for row in store.list_bird_call_candidates():
+        key = (row["period_start_utc"], int(row["call_index"]))
+        calls.setdefault(key, []).append(row)
+
+    interval_rank_scores: dict[str, dict[str, dict[str, list[float]]]] = {}
+    for (period_start_utc, _call_index), candidates in calls.items():
+        for rank in TAXON_RANKS:
+            scores: dict[str, float] = {}
+            for candidate in candidates:
+                taxon = resolve_taxon(candidate["species"], species_list_path)
+                label = taxon_rank_value(taxon, rank)
+                if not label:
+                    continue
+                confidence = candidate["confidence"] if candidate["confidence"] is not None else 0.0
+                scores[label] = scores.get(label, 0.0) + float(confidence)
+            if not scores:
+                continue
+            label, support = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[0]
+            capped_support = min(1.0, support)
+            interval_rank_scores.setdefault(period_start_utc, {}).setdefault(rank, {}).setdefault(label, []).append(
+                capped_support
+            )
+
+    output: dict[str, dict[str, dict]] = {}
+    for period_start_utc, ranks in interval_rank_scores.items():
+        output[period_start_utc] = {}
+        for rank, label_scores in ranks.items():
+            label, supports = sorted(
+                label_scores.items(),
+                key=lambda item: (-len(item[1]), -(sum(item[1]) / len(item[1]) if item[1] else 0.0), item[0]),
+            )[0]
+            avg_support = sum(supports) / len(supports) if supports else None
+            output[period_start_utc][rank] = {
+                "label": label,
+                "calls": len(supports),
+                "support": avg_support,
+                "summary": _format_taxon_summary(label, len(supports), avg_support),
+            }
+    return output
+
+
+def _format_taxon_summary(label: str, calls: int, support: float | None) -> str:
+    if support is None:
+        return f"{label}(Calls: {calls})"
+    return f"{label}(Calls: {calls}, Support: {support * 100:.1f}%)"
 
 
 def _errors_by_interval(store: DataStore) -> dict[str, list[str]]:

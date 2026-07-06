@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -u
+
+if [ -f /etc/default/juara-wifi-reconnect ]; then
+  # shellcheck disable=SC1091
+  . /etc/default/juara-wifi-reconnect
+fi
+
+LOG_PATH="${JUARA_WIFI_RECONNECT_LOG:-/var/log/juara-wifi-reconnect.log}"
+IFACE="${JUARA_WIFI_IFACE:-wlan0}"
+PING_TARGET="${JUARA_WIFI_PING_TARGET:-1.1.1.1}"
+
+log() {
+  printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
+}
+
+if ping -I "$IFACE" -c 1 -W 4 "$PING_TARGET" >/dev/null 2>&1; then
+  log "wifi ok via $IFACE"
+  exit 0
+fi
+
+log "wifi check failed; nudging NetworkManager"
+nmcli radio wifi on >/dev/null 2>&1 || true
+nmcli device set "$IFACE" managed yes >/dev/null 2>&1 || true
+nmcli device reapply "$IFACE" >/dev/null 2>&1 || true
+nmcli device connect "$IFACE" >/dev/null 2>&1 || true
+sleep 10
+
+if ping -I "$IFACE" -c 1 -W 4 "$PING_TARGET" >/dev/null 2>&1; then
+  log "wifi recovered"
+else
+  log "wifi still offline"
+fi

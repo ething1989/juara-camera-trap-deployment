@@ -6,7 +6,7 @@ admin1_region = "BR-MT"
 timezone = "America/Cuiaba"
 
 [storage]
-root = "/mnt/juara_usb"
+root = "/var/lib/juara-station/local"
 fallback_root = "/var/lib/juara-station"
 state_root = "/var/lib/juara-station/state"
 work_root = "/tmp/juara-ai-work"

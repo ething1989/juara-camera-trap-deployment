@@ -426,6 +426,7 @@ else
 fi
 
 mkdir -p \
+  /var/lib/juara-station/local \
   /var/lib/juara-station/state \
   /var/lib/juara-station/audio_recordings \
   /tmp/juara-ai-work \
@@ -469,6 +470,10 @@ chmod 0755 /usr/local/bin/juara-planned-reboot
 if [[ -f "$APP_DIR/scripts/juara_motion_trips.py" ]]; then
   install -m 0755 "$APP_DIR/scripts/juara_motion_trips.py" /usr/local/bin/juara-motion-trips
 fi
+install -m 0755 "$APP_DIR/scripts/juara_wifi_reconnect" /usr/local/bin/juara_wifi_reconnect
+install -m 0755 "$APP_DIR/scripts/juara_networkpi_maintenance" /usr/local/bin/juara_networkpi_maintenance
+install -m 0755 "$APP_DIR/scripts/juara_git_update" /usr/local/bin/juara_git_update
+install -m 0755 "$APP_DIR/scripts/juara_gdrive_sync" /usr/local/bin/juara_gdrive_sync
 
 sed "s#__USER__#$SERVICE_USER#g; s#__APP_DIR__#$APP_DIR#g; s#__CONFIG_PATH__#$CONFIG_PATH#g" \
   "$APP_DIR/systemd/juara-station.service.in" > /etc/systemd/system/juara-station.service
@@ -476,6 +481,10 @@ sed "s#__USER__#$SERVICE_USER#g; s#__APP_DIR__#$APP_DIR#g; s#__CONFIG_PATH__#$CO
   "$APP_DIR/systemd/juara-ai-worker.service.in" > /etc/systemd/system/juara-ai-worker.service
 install -m 0644 "$APP_DIR/systemd/juara-daily-reboot.service" /etc/systemd/system/juara-daily-reboot.service
 install -m 0644 "$APP_DIR/systemd/juara-daily-reboot.timer" /etc/systemd/system/juara-daily-reboot.timer
+install -m 0644 "$APP_DIR/systemd/juara-wifi-reconnect.service" /etc/systemd/system/juara-wifi-reconnect.service
+install -m 0644 "$APP_DIR/systemd/juara-wifi-reconnect.timer" /etc/systemd/system/juara-wifi-reconnect.timer
+install -m 0644 "$APP_DIR/systemd/juara-networkpi-maintenance.service" /etc/systemd/system/juara-networkpi-maintenance.service
+install -m 0644 "$APP_DIR/systemd/juara-networkpi-maintenance.timer" /etc/systemd/system/juara-networkpi-maintenance.timer
 
 systemctl daemon-reload
 systemctl enable gpsd.socket gpsd.service || true
@@ -483,6 +492,9 @@ systemctl restart gpsd.socket gpsd.service || true
 systemctl enable juara-station.service
 systemctl enable juara-ai-worker.service
 systemctl enable --now juara-daily-reboot.timer
+systemctl enable --now juara-wifi-reconnect.timer
+systemctl enable --now juara-networkpi-maintenance.timer
+umount "$USB_MOUNT" 2>/dev/null || true
 
 "$VENV_PYTHON" - <<'PY' || true
 import importlib.util

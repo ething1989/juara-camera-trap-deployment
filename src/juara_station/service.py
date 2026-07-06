@@ -446,6 +446,8 @@ class StationService:
             latitude=self._current_latitude,
             longitude=self._current_longitude,
             interval_seconds=self.config.schedule.interval_seconds,
+            birdnet_species_list_path=self.config.birdnet.species_list_path,
+            completed_only=True,
         )
 
     def _prepare_dynamic_coordinates_and_species(self, log_non_gps_event: bool = True) -> set[date_type]:

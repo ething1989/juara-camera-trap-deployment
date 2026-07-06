@@ -1,0 +1,8 @@
+[Unit]
+Description=Juara half-hour WiFi reconnect nudge
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/juara_wifi_reconnect

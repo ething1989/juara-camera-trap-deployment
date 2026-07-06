@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -u
+
+if [ -f /etc/default/juara-networkpi-maintenance ]; then
+  # shellcheck disable=SC1091
+  . /etc/default/juara-networkpi-maintenance
+fi
+
+LOG_PATH="${JUARA_MAINTENANCE_LOG:-/var/log/juara-networkpi-maintenance.log}"
+LOCK_PATH="${JUARA_MAINTENANCE_LOCK:-/run/lock/juara-networkpi-maintenance.lock}"
+USB_MOUNT="${JUARA_USB_MOUNT:-/mnt/juara_usb}"
+LOCAL_ROOT="${JUARA_LOCAL_ROOT:-/var/lib/juara-station/local}"
+USB_ROOT="${JUARA_USB_ROOT:-/mnt/juara_usb/juara}"
+SETUP_SSID="${JUARA_SETUP_SSID:-NetworkPi}"
+
+log() {
+  printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
+}
+
+mkdir -p "$(dirname "$LOCK_PATH")"
+exec 9>"$LOCK_PATH"
+if ! flock -n 9; then
+  log "previous maintenance pass still running"
+  exit 0
+fi
+
+mount_usb() {
+  mkdir -p "$USB_MOUNT"
+  if findmnt -rn "$USB_MOUNT" >/dev/null 2>&1; then
+    return 0
+  fi
+  if systemctl list-unit-files mnt-juara_usb.mount >/dev/null 2>&1; then
+    systemctl start mnt-juara_usb.mount >/dev/null 2>&1 || true
+  fi
+  mount "$USB_MOUNT" >/dev/null 2>&1 || true
+  findmnt -rn "$USB_MOUNT" >/dev/null 2>&1
+}
+
+unmount_usb() {
+  sync
+  if findmnt -rn "$USB_MOUNT" >/dev/null 2>&1; then
+    umount "$USB_MOUNT" >/dev/null 2>&1 || log "USB unmount skipped; mount is busy"
+  fi
+}
+
+copy_to_usb() {
+  if [ ! -d "$LOCAL_ROOT" ]; then
+    log "local station folder missing: $LOCAL_ROOT"
+    return 0
+  fi
+  mkdir -p "$USB_ROOT"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete \
+      --exclude '/audio/**' \
+      --exclude '/media/audio/**' \
+      --exclude '/audio_recordings/**' \
+      --exclude '*.wav' \
+      --exclude '*.tmp' \
+      --exclude '*.part' \
+      "$LOCAL_ROOT"/ "$USB_ROOT"/ >>"$LOG_PATH" 2>&1
+  else
+    cp -a "$LOCAL_ROOT"/. "$USB_ROOT"/ >>"$LOG_PATH" 2>&1 || true
+  fi
+  log "USB export updated from $LOCAL_ROOT to $USB_ROOT"
+}
+
+active_ssid="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1 == "yes" { print $2; exit }')"
+
+if mount_usb; then
+  copy_to_usb
+else
+  log "USB is not mountable right now"
+fi
+
+if [ "$active_ssid" = "$SETUP_SSID" ]; then
+  log "on $SETUP_SSID; running git update and Google Drive sync"
+  /usr/local/bin/juara_git_update >>"$LOG_PATH" 2>&1 || true
+  JUARA_LOCAL_ROOT="$USB_ROOT" /usr/local/bin/juara_gdrive_sync >>"$LOG_PATH" 2>&1 || true
+else
+  log "not on $SETUP_SSID; skipped git/Drive maintenance (active ssid: ${active_ssid:-none})"
+fi
+
+unmount_usb

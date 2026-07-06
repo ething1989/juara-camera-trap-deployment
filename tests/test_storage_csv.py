@@ -5,7 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from juara_station.acoustic_indices import ACOUSTIC_INDEX_VERSION, AcousticIndexResult
-from juara_station.csv_exporter import export_day_csv
+from juara_station.csv_exporter import CsvExportOptions, export_day_csv, export_main_csv
 from juara_station.storage import BirdCall, BirdCandidate, DataStore, SensorSample
 
 
@@ -24,7 +24,7 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
             cpu_temp_c=40.0,
         )
     )
-    store.upsert_audio_event(start, "recorded", "/tmp/audio.wav", start, end)
+    store.upsert_audio_event(start, "recorded", "/tmp/audio.wav", start, end, ai_status="done")
     store.save_bird_calls(
         start,
         [
@@ -81,7 +81,14 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
     store.upsert_interval_summary(start, end, start, "gps")
     no_detection_start = start + timedelta(minutes=5)
     no_detection_end = no_detection_start + timedelta(minutes=5)
-    store.upsert_audio_event(no_detection_start, "recorded", "/tmp/audio-empty.wav", no_detection_start, no_detection_end)
+    store.upsert_audio_event(
+        no_detection_start,
+        "recorded",
+        "/tmp/audio-empty.wav",
+        no_detection_start,
+        no_detection_end,
+        ai_status="done",
+    )
     store.upsert_interval_summary(no_detection_start, no_detection_end, no_detection_start, "gps")
     event_time = start + timedelta(minutes=10)
     store.insert_system_event(event_time, "PI_RESTARTED", "rtc")
@@ -116,6 +123,9 @@ def test_interval_summary_exports_expected_csv(tmp_path: Path):
     assert rows[0]["co2_ppm_avg"] == "432.000"
     assert rows[0]["photos_taken"] == "1"
     assert rows[0]["bird_top_species"] == "Hyacinth macaw(Calls: 2, Conf: 72.5%)"
+    assert rows[0]["bird_top_genus"] == "Anodorhynchus(Calls: 2, Support: 72.5%)"
+    assert rows[0]["bird_top_family"] == "Psittacidae(Calls: 2, Support: 78.5%)"
+    assert rows[0]["bird_top_group"] == "macaw(Calls: 2, Support: 78.5%)"
     assert rows[0]["acoustic_index_version"] == ACOUSTIC_INDEX_VERSION
     assert rows[0]["acoustic_duration_s"] == "300.000"
     assert rows[0]["acoustic_sample_rate_hz"] == "48000"
@@ -152,7 +162,7 @@ def test_csv_keeps_strongest_ninety_calls_when_interval_is_busy(tmp_path: Path):
         BirdCall(float(index * 3), float(index * 3 + 3), (BirdCandidate(f"Bird {index:03d}", index / 100),))
         for index in range(1, 96)
     ]
-    store.upsert_audio_event(start, "recorded", "/tmp/audio.wav", start, end)
+    store.upsert_audio_event(start, "recorded", "/tmp/audio.wav", start, end, ai_status="done")
     store.save_bird_calls(start, calls)
     store.upsert_interval_summary(start, end, start, "gps")
 
@@ -162,3 +172,37 @@ def test_csv_keeps_strongest_ninety_calls_when_interval_is_busy(tmp_path: Path):
     assert rows[0]["bird_calls_truncated"] == "5"
     assert rows[0]["Call 1"] == "Bird 006 (6.0%)"
     assert rows[0]["Call 90"] == "Bird 095 (95.0%)"
+
+
+def test_csv_omits_pending_audio_intervals_until_ai_finishes(tmp_path: Path):
+    store = DataStore(tmp_path / "station.sqlite3")
+    done_start = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+    pending_start = done_start + timedelta(minutes=5)
+    event_time = done_start + timedelta(minutes=11)
+
+    store.upsert_audio_event(
+        done_start,
+        "recorded",
+        "/tmp/done.wav",
+        done_start,
+        done_start + timedelta(minutes=5),
+        ai_status="done",
+    )
+    store.save_bird_calls(done_start, [BirdCall(0.0, 3.0, (BirdCandidate("Hyacinth macaw", 0.75),))])
+    store.upsert_interval_summary(done_start, done_start + timedelta(minutes=5), done_start, "gps")
+    store.upsert_audio_event(
+        pending_start,
+        "recorded",
+        "/tmp/pending.wav",
+        pending_start,
+        pending_start + timedelta(minutes=5),
+    )
+    store.upsert_interval_summary(pending_start, pending_start + timedelta(minutes=5), pending_start, "gps")
+    store.insert_system_event(event_time, "PI_RESTARTED", "rtc")
+
+    csv_path = export_main_csv(store, tmp_path, timezone.utc, options=CsvExportOptions(filename="complete.csv"))
+    rows = list(csv.DictReader(csv_path.open()))
+
+    assert [row["timestamp"] for row in rows] == ["2026-05-10T12:00:00", "2026-05-10T12:11:00"]
+    assert rows[0]["bird_top_species"] == "Hyacinth macaw(Calls: 1, Conf: 75.0%)"
+    assert rows[1]["system_event"] == "PI_RESTARTED"
