@@ -15,6 +15,8 @@ STATE_DIR="${JUARA_STATE_DIR:-/var/lib/juara-station/state}"
 SETUP_MARKER="${JUARA_SETUP_MARKER:-$STATE_DIR/setup-mode.active}"
 SETUP_SSID="${JUARA_SETUP_SSID:-NetworkPi}"
 SERVICE_REBOOT_TIMER="${JUARA_SERVICE_REBOOT_TIMER:-juara-service-hourly-reboot.timer}"
+GIT_UPDATE_TIMEOUT_SECONDS="${JUARA_GIT_UPDATE_TIMEOUT_SECONDS:-300}"
+GDRIVE_SYNC_TIMEOUT_SECONDS="${JUARA_GDRIVE_SYNC_TIMEOUT_SECONDS:-300}"
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
@@ -67,6 +69,25 @@ copy_to_usb() {
   log "USB export updated from $LOCAL_ROOT to $USB_ROOT"
 }
 
+run_with_timeout() {
+  label="$1"
+  seconds="$2"
+  shift 2
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=30s "$seconds" "$@" >>"$LOG_PATH" 2>&1
+  else
+    "$@" >>"$LOG_PATH" 2>&1
+  fi
+  status=$?
+  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    log "$label timed out after ${seconds}s"
+  elif [ "$status" -ne 0 ]; then
+    log "$label exited with status $status"
+  else
+    log "$label completed"
+  fi
+}
+
 active_ssid="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1 == "yes" { print $2; exit }')"
 
 if [ "$active_ssid" = "$SETUP_SSID" ]; then
@@ -92,8 +113,8 @@ fi
 
 if [ "$active_ssid" = "$SETUP_SSID" ]; then
   log "on $SETUP_SSID; running git update and Google Drive sync"
-  /usr/local/bin/juara_git_update >>"$LOG_PATH" 2>&1 || true
-  JUARA_LOCAL_ROOT="$USB_ROOT" /usr/local/bin/juara_gdrive_sync >>"$LOG_PATH" 2>&1 || true
+  run_with_timeout "git update" "$GIT_UPDATE_TIMEOUT_SECONDS" /usr/local/bin/juara_git_update
+  run_with_timeout "Google Drive sync" "$GDRIVE_SYNC_TIMEOUT_SECONDS" env JUARA_LOCAL_ROOT="$USB_ROOT" /usr/local/bin/juara_gdrive_sync
 else
   log "not on $SETUP_SSID; skipped git/Drive maintenance (active ssid: ${active_ssid:-none})"
 fi
