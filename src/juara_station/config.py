@@ -133,6 +133,10 @@ class AudioConfig:
     mixer_command: str = "amixer"
     capture_gain_percent: int | None = 100
     capture_gain_controls: list[str] = field(default_factory=lambda: ["Mic", "Capture"])
+    capture_agc_enabled: bool | None = True
+    capture_agc_controls: list[str] = field(
+        default_factory=lambda: ["Auto Gain Control", "Automatic Gain Control", "AGC"]
+    )
     delete_recordings_after_ai: bool = True
     segment_seconds: int = 0
 
@@ -141,6 +145,9 @@ class AudioConfig:
 class SensorConfig:
     enabled: bool = True
     bme280_address: int = 0x76
+    temperature_offset_c: float = 0.0
+    humidity_offset_pct: float = 0.0
+    pressure_offset_mmhg: float = 0.0
     veml7700_address: int = 0x10
     stagger_read_seconds: float = 0.0
     scd41_enabled: bool = False

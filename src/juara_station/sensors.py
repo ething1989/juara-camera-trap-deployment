@@ -145,9 +145,14 @@ class SensorSuite:
         stagger_seconds = max(0.0, float(self.config.stagger_read_seconds))
         if self._bme is not None:
             try:
-                readings.temperature_c = float(self._bme.temperature)
-                readings.humidity_pct = float(self._bme.relative_humidity)
-                readings.pressure_mmhg = float(self._bme.pressure) * HPA_TO_MMHG
+                readings.temperature_c = float(self._bme.temperature) + float(self.config.temperature_offset_c)
+                readings.humidity_pct = min(
+                    100.0,
+                    max(0.0, float(self._bme.relative_humidity) + float(self.config.humidity_offset_pct)),
+                )
+                readings.pressure_mmhg = (
+                    float(self._bme.pressure) * HPA_TO_MMHG + float(self.config.pressure_offset_mmhg)
+                )
             except Exception as exc:  # Hardware libraries raise broad OSErrors/RuntimeErrors.
                 self._remember_error(f"BME280 read failed: {exc}")
                 errors.append("BME Connection")

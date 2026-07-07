@@ -78,14 +78,28 @@ class AudioRecorder:
         self._mixer_configured_devices.add(device)
         percent = f"{max(0, min(100, self.config.capture_gain_percent))}%"
         for control in self.config.capture_gain_controls:
+            self._set_mixer_control(device, control, percent)
+        if self.config.capture_agc_enabled is not None:
+            value = "on" if self.config.capture_agc_enabled else "off"
+            for control in self.config.capture_agc_controls:
+                self._set_mixer_control(device, control, value)
+
+    def _set_mixer_control(self, device: str, control: str, value: str) -> None:
+        commands = [
+            [self.config.mixer_command, "-D", device, "sset", control, value],
+            [self.config.mixer_command, "sset", control, value],
+        ]
+        for command in commands:
             try:
-                subprocess.run(
-                    [self.config.mixer_command, "-D", device, "sset", control, percent],
+                proc = subprocess.run(
+                    command,
                     check=False,
                     capture_output=True,
                     text=True,
                     timeout=5,
                 )
+                if proc.returncode == 0:
+                    return
             except (OSError, subprocess.SubprocessError):
                 continue
 
