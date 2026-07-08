@@ -1,0 +1,11 @@
+[Unit]
+Description=Write Juara station health report daily
+
+[Timer]
+OnCalendar=*-*-* 03:25:00
+Persistent=true
+RandomizedDelaySec=5m
+Unit=juara-health-report.service
+
+[Install]
+WantedBy=timers.target

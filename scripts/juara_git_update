@@ -13,6 +13,47 @@ DEPLOY_DIR="${JUARA_GIT_DEPLOY_DIR:-/opt/juara-wildlife-station}"
 BRANCH="${JUARA_GIT_BRANCH:-main}"
 CONFIG_PATH="${JUARA_STATION_CONFIG:-/etc/juara-station.toml}"
 GDRIVE_ENV="${JUARA_GDRIVE_ENV:-/etc/default/juara-gdrive-sync}"
+SERVICE_USER="${JUARA_SERVICE_USER:-}"
+
+health_report_ran=0
+
+detect_gdrive_user() {
+  if [ -n "$SERVICE_USER" ] && id "$SERVICE_USER" >/dev/null 2>&1; then
+    printf '%s\n' "$SERVICE_USER"
+    return 0
+  fi
+  for config in /home/*/.config/rclone/rclone.conf; do
+    [ -s "$config" ] || continue
+    basename "$(dirname "$(dirname "$(dirname "$config")")")"
+    return 0
+  done
+  return 1
+}
+
+run_health_report() {
+  if [ "$health_report_ran" -eq 1 ]; then
+    return 0
+  fi
+  health_report_ran=1
+  if command -v juara_health_report >/dev/null 2>&1; then
+    juara_health_report >>"$LOG_PATH" 2>&1 || log "health report failed"
+  fi
+}
+
+run_gdrive_sync() {
+  if ! command -v juara_gdrive_sync >/dev/null 2>&1; then
+    log "gdrive sync skipped; juara_gdrive_sync is not installed"
+    return 0
+  fi
+  sync_user="$(detect_gdrive_user || true)"
+  if [ "$(id -u)" -eq 0 ] && [ -n "$sync_user" ] && id "$sync_user" >/dev/null 2>&1; then
+    timeout --kill-after=30s 300s sudo -u "$sync_user" env "HOME=/home/$sync_user" /usr/local/bin/juara_gdrive_sync >>"$LOG_PATH" 2>&1 || log "gdrive sync after git update failed"
+  else
+    timeout --kill-after=30s 300s /usr/local/bin/juara_gdrive_sync >>"$LOG_PATH" 2>&1 || log "gdrive sync after git update failed"
+  fi
+}
+
+trap run_health_report EXIT
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
@@ -75,6 +116,7 @@ if [ "$updated" -eq 1 ]; then
     juara_git_update \
     juara_networkpi_maintenance \
     juara_gdrive_sync \
+    juara_health_report \
     juara_wifi_reconnect \
     juara_gdrive_auth_helper \
     juara_scd41_check \
@@ -86,6 +128,12 @@ if [ "$updated" -eq 1 ]; then
   done
   if [ -f "$CHECKOUT_DIR/scripts/juara_motion_trips.py" ]; then
     install -o root -g root -m 0755 "$CHECKOUT_DIR/scripts/juara_motion_trips.py" /usr/local/bin/juara-motion-trips >>"$LOG_PATH" 2>&1 || true
+  fi
+  if [ -f "$CHECKOUT_DIR/systemd/juara-health-report.service" ] && [ -f "$CHECKOUT_DIR/systemd/juara-health-report.timer" ]; then
+    install -o root -g root -m 0644 "$CHECKOUT_DIR/systemd/juara-health-report.service" /etc/systemd/system/juara-health-report.service >>"$LOG_PATH" 2>&1 || true
+    install -o root -g root -m 0644 "$CHECKOUT_DIR/systemd/juara-health-report.timer" /etc/systemd/system/juara-health-report.timer >>"$LOG_PATH" 2>&1 || true
+    systemctl daemon-reload >>"$LOG_PATH" 2>&1 || true
+    systemctl enable --now juara-health-report.timer >>"$LOG_PATH" 2>&1 || true
   fi
 fi
 
@@ -220,3 +268,6 @@ if [ "$updated" -eq 1 ] || [ "$config_changed" -eq 1 ]; then
 else
   log "field repo and managed config already current"
 fi
+
+run_health_report
+run_gdrive_sync

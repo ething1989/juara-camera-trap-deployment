@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -u
+
+if [ -f /etc/default/juara-gdrive-sync ]; then
+  # shellcheck disable=SC1091
+  . /etc/default/juara-gdrive-sync
+fi
+if [ -f /etc/default/juara-health-report ]; then
+  # shellcheck disable=SC1091
+  . /etc/default/juara-health-report
+fi
+
+LOCAL_ROOT="${JUARA_LOCAL_ROOT:-/var/lib/juara-station/local}"
+STATE_DIR="${JUARA_STATE_DIR:-/var/lib/juara-station/state}"
+REPORT_DIR="${JUARA_REPORT_DIR:-$LOCAL_ROOT/reports}"
+LOG_PATH="${JUARA_HEALTH_REPORT_LOG:-/var/log/juara-health-report.log}"
+LOCK_PATH="${JUARA_HEALTH_REPORT_LOCK:-/run/lock/juara-health-report.lock}"
+HOST="$(hostname 2>/dev/null || printf 'unknown-host')"
+STAMP_UTC="$(date -u +%Y%m%dT%H%M%SZ)"
+REPORT_PATH="$REPORT_DIR/health_${HOST}_${STAMP_UTC}.txt"
+LATEST_PATH="$REPORT_DIR/latest_health_report.txt"
+export LOCAL_ROOT STATE_DIR REPORT_DIR
+
+log() {
+  printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG_PATH" >/dev/null
+}
+
+run_section() {
+  title="$1"
+  shift
+  {
+    printf '\n## %s\n' "$title"
+    "$@" 2>&1 || printf 'command failed: %s\n' "$*"
+  } >>"$REPORT_PATH"
+}
+
+append_command() {
+  printf '$ %s\n' "$*" >>"$REPORT_PATH"
+  "$@" >>"$REPORT_PATH" 2>&1 || printf 'exit=%s\n' "$?" >>"$REPORT_PATH"
+}
+
+mkdir -p "$REPORT_DIR" "$(dirname "$LOCK_PATH")" "$(dirname "$LOG_PATH")"
+exec 9>"$LOCK_PATH"
+if ! flock -n 9; then
+  log "previous health report still running"
+  exit 0
+fi
+
+{
+  printf 'Juara Pi Health Report\n'
+  printf 'generated_utc=%s\n' "$STAMP_UTC"
+  printf 'generated_local=%s\n' "$(date -Is)"
+  printf 'hostname=%s\n' "$HOST"
+  printf 'local_root=%s\n' "$LOCAL_ROOT"
+  printf 'state_dir=%s\n' "$STATE_DIR"
+} >"$REPORT_PATH"
+
+run_section "Identity" bash -c '
+hostname
+hostname -I 2>/dev/null || true
+date -Is
+uptime || true
+'
+
+run_section "Network" bash -c '
+nmcli -t -f ACTIVE,SSID,SIGNAL dev wifi 2>/dev/null | sed -n "1,20p" || true
+nmcli -t -f NAME,TYPE,AUTOCONNECT,AUTOCONNECT-PRIORITY connection show 2>/dev/null | sed -n "1,80p" || true
+ip -4 addr show 2>/dev/null || true
+'
+
+run_section "Services" bash -c '
+for unit in \
+  juara-station.service \
+  juara-ai-worker.service \
+  juara-networkpi-maintenance.timer \
+  juara-git-update.timer \
+  juara-health-report.timer \
+  juara-wifi-reconnect.timer \
+  juara-daily-reboot.timer \
+  gpsd.service \
+  gpsd.socket; do
+  printf "%-38s " "$unit"
+  systemctl is-active "$unit" 2>/dev/null || true
+done
+systemctl list-timers --all "juara-*" --no-pager 2>/dev/null || true
+'
+
+run_section "Git" bash -c '
+for root in /var/lib/juara-station/git /opt /home; do
+  [ -d "$root" ] || continue
+  find "$root" -maxdepth 5 -type d -name .git 2>/dev/null
+done | sort -u | while read -r gitdir; do
+  repo="$(dirname "$gitdir")"
+  printf "\nrepo=%s\n" "$repo"
+  git -C "$repo" remote -v 2>&1 | sed -n "1,8p" || true
+  git -C "$repo" log -1 --pretty="head=%h %ci %s" 2>&1 || true
+  git -C "$repo" status --short 2>&1 | sed -n "1,40p" || true
+done
+[ -f /var/log/juara-git-update.log ] && { printf "\nrecent juara-git-update.log\n"; tail -80 /var/log/juara-git-update.log; }
+'
+
+run_section "Storage" bash -c '
+df -h / "$LOCAL_ROOT" /mnt/juara_usb 2>/dev/null || true
+lsblk -o NAME,LABEL,SIZE,FSTYPE,MOUNTPOINTS 2>/dev/null || true
+findmnt /mnt/juara_usb 2>/dev/null || true
+if findmnt -rn /mnt/juara_usb >/dev/null 2>&1; then
+  if touch /mnt/juara_usb/.juara_health_write_test 2>/tmp/juara_health_usb.err; then
+    rm -f /mnt/juara_usb/.juara_health_write_test
+    printf "usb_write_test=ok\n"
+  else
+    printf "usb_write_test=failed\n"
+    cat /tmp/juara_health_usb.err 2>/dev/null || true
+  fi
+else
+  printf "usb_write_test=skipped_not_mounted\n"
+fi
+'
+
+run_section "Coordinate State" bash -c '
+for path in "$STATE_DIR/active_coordinates.json" "$STATE_DIR/station_start_state.json"; do
+  [ -f "$path" ] || continue
+  printf "\nfile=%s\n" "$path"
+  sed -n "1,120p" "$path"
+done
+'
+
+run_section "Recent CSV Rows" python3 - "$LOCAL_ROOT" <<'PY'
+import csv
+import glob
+import os
+import sys
+
+local_root = sys.argv[1]
+paths = []
+for pattern in (
+    os.path.join(local_root, "logs", "juara_station.csv"),
+    os.path.join(local_root, "juara_station.csv"),
+    "/mnt/juara_usb/juara/logs/juara_station.csv",
+    "/mnt/juara_usb/juara_station.csv",
+):
+    paths.extend(glob.glob(pattern))
+
+seen = set()
+for path in paths:
+    if path in seen or not os.path.exists(path):
+        continue
+    seen.add(path)
+    print(f"\nfile={path}")
+    print(f"mtime={os.path.getmtime(path):.0f} size={os.path.getsize(path)}")
+    with open(path, newline="", errors="replace") as handle:
+        rows = list(csv.DictReader(handle))
+    print(f"rows={len(rows)}")
+    if not rows:
+        continue
+    keys = list(rows[0].keys())
+    wanted_tokens = (
+        "time", "temp", "humid", "press", "lux", "co2", "pm",
+        "photo", "audio", "species", "genus", "family", "order",
+        "acoustic", "yamnet", "error", "note",
+    )
+    interesting = [key for key in keys if any(token in key.lower() for token in wanted_tokens)]
+    print("columns=" + ",".join(interesting[:120]))
+    for row in rows[-8:]:
+        values = {key: row.get(key, "") for key in interesting[:80]}
+        print(values)
+PY
+
+run_section "Folder Contents" bash -c '
+for dir in "$LOCAL_ROOT" "$LOCAL_ROOT/logs" "$LOCAL_ROOT/media" "$LOCAL_ROOT/reports" /mnt/juara_usb/juara; do
+  [ -e "$dir" ] || continue
+  printf "\nfolder=%s\n" "$dir"
+  find "$dir" -maxdepth 3 -type f -printf "%TY-%Tm-%Td %TH:%TM %10s %p\n" 2>/dev/null | sort | tail -200
+done
+'
+
+run_section "I2C" bash -c '
+if command -v i2cdetect >/dev/null 2>&1; then
+  sudo -n i2cdetect -y 1 2>/dev/null || i2cdetect -y 1 2>/dev/null || true
+else
+  printf "i2cdetect not installed\n"
+fi
+'
+
+run_section "Recent Logs" bash -c '
+journalctl -u juara-station.service -n 80 --no-pager 2>/dev/null || true
+printf "\n--- ai worker ---\n"
+journalctl -u juara-ai-worker.service -n 80 --no-pager 2>/dev/null || true
+printf "\n--- maintenance ---\n"
+[ -f /var/log/juara-networkpi-maintenance.log ] && tail -80 /var/log/juara-networkpi-maintenance.log || true
+'
+
+cp "$REPORT_PATH" "$LATEST_PATH"
+log "wrote health report $REPORT_PATH"
+printf '%s\n' "$REPORT_PATH"

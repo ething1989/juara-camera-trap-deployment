@@ -63,6 +63,8 @@ copy_to_usb() {
       --include '/*.csv' \
       --include '/logs/' \
       --include '/logs/*.csv' \
+      --include '/reports/' \
+      --include '/reports/***' \
       --include '/media/' \
       --include '/media/photos/***' \
       --include '/media/survey_photos/***' \

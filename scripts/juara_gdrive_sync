@@ -57,6 +57,8 @@ upload_filters=(
   --filter '+ /logs/'
   --filter '+ /*.csv'
   --filter '+ /logs/*.csv'
+  --filter '+ /reports/'
+  --filter '+ /reports/**'
   --filter '+ /media/'
   --filter '+ /media/survey_photos/**'
   --filter '+ /survey_photos/**'

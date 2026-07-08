@@ -1,0 +1,6 @@
+[Unit]
+Description=Write Juara station health report
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/juara_health_report

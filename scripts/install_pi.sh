@@ -474,6 +474,7 @@ install -m 0755 "$APP_DIR/scripts/juara_wifi_reconnect" /usr/local/bin/juara_wif
 install -m 0755 "$APP_DIR/scripts/juara_networkpi_maintenance" /usr/local/bin/juara_networkpi_maintenance
 install -m 0755 "$APP_DIR/scripts/juara_git_update" /usr/local/bin/juara_git_update
 install -m 0755 "$APP_DIR/scripts/juara_gdrive_sync" /usr/local/bin/juara_gdrive_sync
+install -m 0755 "$APP_DIR/scripts/juara_health_report" /usr/local/bin/juara_health_report
 
 sed "s#__USER__#$SERVICE_USER#g; s#__APP_DIR__#$APP_DIR#g; s#__CONFIG_PATH__#$CONFIG_PATH#g" \
   "$APP_DIR/systemd/juara-station.service.in" > /etc/systemd/system/juara-station.service
@@ -487,6 +488,8 @@ install -m 0644 "$APP_DIR/systemd/juara-networkpi-maintenance.service" /etc/syst
 install -m 0644 "$APP_DIR/systemd/juara-networkpi-maintenance.timer" /etc/systemd/system/juara-networkpi-maintenance.timer
 install -m 0644 "$APP_DIR/systemd/juara-git-update.service" /etc/systemd/system/juara-git-update.service
 install -m 0644 "$APP_DIR/systemd/juara-git-update.timer" /etc/systemd/system/juara-git-update.timer
+install -m 0644 "$APP_DIR/systemd/juara-health-report.service" /etc/systemd/system/juara-health-report.service
+install -m 0644 "$APP_DIR/systemd/juara-health-report.timer" /etc/systemd/system/juara-health-report.timer
 
 systemctl daemon-reload
 systemctl enable gpsd.socket gpsd.service || true
@@ -497,6 +500,7 @@ systemctl enable --now juara-daily-reboot.timer
 systemctl enable --now juara-wifi-reconnect.timer
 systemctl enable --now juara-networkpi-maintenance.timer
 systemctl enable --now juara-git-update.timer
+systemctl enable --now juara-health-report.timer
 umount "$USB_MOUNT" 2>/dev/null || true
 
 "$VENV_PYTHON" - <<'PY' || true
