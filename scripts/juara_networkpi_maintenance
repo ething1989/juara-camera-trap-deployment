@@ -56,7 +56,10 @@ copy_to_usb() {
   fi
   mkdir -p "$USB_ROOT"
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete \
+    rsync -rltD --delete \
+      --no-owner \
+      --no-group \
+      --no-perms \
       --delete-excluded \
       --exclude '**/juara_environment_samples.csv' \
       --exclude '**/juara_photo_diagnostics.csv' \
